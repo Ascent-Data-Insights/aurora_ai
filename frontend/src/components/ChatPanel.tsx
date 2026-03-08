@@ -3,6 +3,7 @@ import { Send, Loader2, AlertCircle } from 'lucide-react'
 import { Button } from '@components/button'
 import type { Message } from '@/hooks/useChat'
 import { useTypingEffect } from '@/hooks/useTypingEffect'
+import Markdown from 'react-markdown'
 import clsx from 'clsx'
 
 interface ChatPanelProps {
@@ -42,7 +43,13 @@ function MessageBubble({ message, isStreaming }: { message: Message; isStreaming
             : 'bg-zinc-100 text-zinc-900 rounded-bl-md'
         )}
       >
-        <p className="whitespace-pre-wrap">{isUser ? message.content : displayedContent}</p>
+        {isUser ? (
+          <p className="whitespace-pre-wrap">{message.content}</p>
+        ) : (
+          <div className="prose prose-sm prose-zinc max-w-none">
+            <Markdown>{displayedContent}</Markdown>
+          </div>
+        )}
       </div>
     </div>
   )
