@@ -1,4 +1,7 @@
+import json
+
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 
 from app.models.chat import ChatRequest, ChatResponse, MessageEntry, SessionResponse
 from app.services.agent import agent
@@ -28,6 +31,39 @@ async def chat(request: ChatRequest) -> ChatResponse:
     session_store.set(session_id, result.all_messages())
 
     return ChatResponse(message=result.output, session_id=session_id)
+
+
+@router.post("/stream")
+async def chat_stream(request: ChatRequest) -> StreamingResponse:
+    session_id = request.session_id or session_store.create()
+
+    message_history = session_store.get(session_id)
+    if message_history is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    async def event_generator():
+        # Send session_id as the first event
+        yield f"data: {json.dumps({'type': 'session', 'session_id': session_id})}\n\n"
+
+        async with agent.run_stream(
+            request.message, message_history=message_history
+        ) as stream:
+            async for chunk in stream.stream_text(delta=True):
+                yield f"data: {json.dumps({'type': 'delta', 'content': chunk})}\n\n"
+
+            # Save history after stream completes
+            session_store.set(session_id, stream.all_messages())
+
+        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/sessions/{session_id}/messages", response_model=list[MessageEntry])
