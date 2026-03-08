@@ -2,6 +2,7 @@ import { useRef, useEffect } from 'react'
 import { Send, Loader2, AlertCircle } from 'lucide-react'
 import { Button } from '@components/button'
 import type { Message } from '@/hooks/useChat'
+import { useTypingEffect } from '@/hooks/useTypingEffect'
 import clsx from 'clsx'
 
 interface ChatPanelProps {
@@ -15,9 +16,10 @@ interface ChatPanelProps {
 
 function MessageBubble({ message, isStreaming }: { message: Message; isStreaming?: boolean }) {
   const isUser = message.role === 'user'
+  const displayedContent = useTypingEffect(message.content, !!isStreaming)
 
   // Empty assistant message while waiting for first token
-  if (!isUser && !message.content && isStreaming) {
+  if (!isUser && !displayedContent && isStreaming) {
     return (
       <div className="flex justify-start">
         <div className="flex items-center gap-2 rounded-2xl bg-zinc-100 px-4 py-3 text-sm text-zinc-500">
@@ -28,7 +30,7 @@ function MessageBubble({ message, isStreaming }: { message: Message; isStreaming
     )
   }
 
-  if (!message.content) return null
+  if (!displayedContent) return null
 
   return (
     <div className={clsx('flex', isUser ? 'justify-end' : 'justify-start')}>
@@ -40,7 +42,7 @@ function MessageBubble({ message, isStreaming }: { message: Message; isStreaming
             : 'bg-zinc-100 text-zinc-900 rounded-bl-md'
         )}
       >
-        <p className="whitespace-pre-wrap">{message.content}</p>
+        <p className="whitespace-pre-wrap">{isUser ? message.content : displayedContent}</p>
       </div>
     </div>
   )
