@@ -4,7 +4,7 @@ import logging
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
-from app.models.chat import ChatRequest, ChatResponse, MessageEntry, SessionResponse
+from app.models.chat import ChatRequest, ChatResponse, MessageEntry, SessionResponse, SessionSummary
 from app.models.scores import RingScores
 from app.services.chat_agent import chat_agent
 from app.services.scoring_agent import scoring_agent
@@ -13,6 +13,14 @@ from app.services.sessions import session_store
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
+
+
+@router.get("/sessions", response_model=list[SessionSummary])
+async def list_sessions() -> list[SessionSummary]:
+    return [
+        SessionSummary(session_id=sid, created_at=created_at)
+        for sid, created_at in session_store.list_all()
+    ]
 
 
 @router.post("/sessions", response_model=SessionResponse)

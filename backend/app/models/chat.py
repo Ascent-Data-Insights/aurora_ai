@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel
 
 
@@ -13,6 +15,11 @@ class ChatResponse(BaseModel):
 
 class SessionResponse(BaseModel):
     session_id: str
+
+
+class SessionSummary(BaseModel):
+    session_id: str
+    created_at: datetime
 
 
 class MessageEntry(BaseModel):
