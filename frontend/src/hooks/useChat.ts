@@ -25,12 +25,19 @@ const INITIAL_SCORES: Scores = {
 
 const API_BASE = 'http://localhost:8000'
 
+export interface DebugInfo {
+  phase: string
+  guidance: string
+  state: Record<string, unknown>
+}
+
 export function useChat() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [scores, setScores] = useState<Scores>(INITIAL_SCORES)
+  const [debug, setDebug] = useState<DebugInfo | null>(null)
   const sessionIdRef = useRef<string | null>(null)
 
   const sendMessage = useCallback(async (content?: string) => {
@@ -108,6 +115,12 @@ export function useChat() {
                 feasibility: event.feasibility,
                 scalability: event.scalability,
               })
+            } else if (event.type === 'debug') {
+              setDebug({
+                phase: event.phase,
+                guidance: event.guidance,
+                state: event.state,
+              })
             }
             // 'done' — nothing to do, loop will exit on reader.read()
           } catch {
@@ -136,8 +149,9 @@ export function useChat() {
     setInput('')
     setError(null)
     setScores(INITIAL_SCORES)
+    setDebug(null)
     sessionIdRef.current = null
   }, [])
 
-  return { messages, input, setInput, isLoading, error, scores, sendMessage, resetChat }
+  return { messages, input, setInput, isLoading, error, scores, debug, sendMessage, resetChat }
 }

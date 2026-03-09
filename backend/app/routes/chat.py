@@ -5,9 +5,10 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
 from app.models.chat import ChatRequest, ChatResponse, MessageEntry, SessionResponse, SessionSummary
-from app.models.scores import RingScores
-from app.services.chat_agent import chat_agent
-from app.services.scoring_agent import scoring_agent
+from app.models.graph import SessionState
+from app.services.chat_agent import build_chat_agent
+from app.services.extractor_agent import extractor_agent
+from app.services.phase import get_phase_guidance
 from app.services.sessions import session_store
 
 logger = logging.getLogger(__name__)
@@ -31,16 +32,18 @@ async def create_session() -> SessionResponse:
 
 @router.post("", response_model=ChatResponse)
 async def chat(request: ChatRequest) -> ChatResponse:
-    # Auto-create session if none provided
     session_id = request.session_id or session_store.create()
 
     message_history = session_store.get(session_id)
     if message_history is None:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    result = await chat_agent.run(request.message, message_history=message_history)
+    # Build phase-aware chat agent
+    state = session_store.get_state(session_id) or SessionState()
+    _phase, guidance = get_phase_guidance(state)
+    agent = build_chat_agent(guidance)
 
-    # Save updated history
+    result = await agent.run(request.message, message_history=message_history)
     session_store.set(session_id, result.all_messages())
 
     return ChatResponse(message=result.output, session_id=session_id)
@@ -55,33 +58,46 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
         raise HTTPException(status_code=404, detail="Session not found")
 
     async def event_generator():
-        # Send session_id as the first event
         yield f"data: {json.dumps({'type': 'session', 'session_id': session_id})}\n\n"
 
+        # Build phase-aware chat agent
+        state = session_store.get_state(session_id) or SessionState()
+        phase, guidance = get_phase_guidance(state)
+        agent = build_chat_agent(guidance)
+
+        # Emit debug info: phase + state before this turn
+        yield f"data: {json.dumps({'type': 'debug', 'phase': phase.value, 'guidance': guidance, 'state': state.model_dump()})}\n\n"
+
         assistant_response = ""
-        async with chat_agent.run_stream(
+        async with agent.run_stream(
             request.message, message_history=message_history
         ) as stream:
             async for chunk in stream.stream_text(delta=True):
                 assistant_response += chunk
                 yield f"data: {json.dumps({'type': 'delta', 'content': chunk})}\n\n"
 
-            # Save history after stream completes
             session_store.set(session_id, stream.all_messages())
 
-        # Run scoring agent after chat completes
+        # Run extractor agent after chat completes
         try:
-            current_scores = session_store.get_scores(session_id) or RingScores()
-            scoring_input = (
-                f"Current scores:\n{current_scores.model_dump_json()}\n\n"
+            extractor_input = (
+                f"Current state:\n{state.model_dump_json(indent=2)}\n\n"
+                f"Current phase: {phase.value}\n\n"
                 f"Latest user message:\n{request.message}\n\n"
                 f"Latest assistant response:\n{assistant_response}"
             )
-            result = await scoring_agent.run(scoring_input)
-            session_store.set_scores(session_id, result.output)
-            yield f"data: {json.dumps({'type': 'scores', **result.output.model_dump()})}\n\n"
+            result = await extractor_agent.run(extractor_input)
+            new_state = result.output
+            session_store.set_state(session_id, new_state)
+
+            # Emit scores for the frontend (same shape as before)
+            yield f"data: {json.dumps({'type': 'scores', **new_state.scores.model_dump()})}\n\n"
+
+            # Emit updated debug info after extraction
+            new_phase, new_guidance = get_phase_guidance(new_state)
+            yield f"data: {json.dumps({'type': 'debug', 'phase': new_phase.value, 'guidance': new_guidance, 'state': new_state.model_dump()})}\n\n"
         except Exception:
-            logger.exception("Scoring agent failed")
+            logger.exception("Extractor agent failed")
 
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
 

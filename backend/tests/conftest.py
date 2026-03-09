@@ -3,30 +3,34 @@ from httpx import ASGITransport, AsyncClient
 from pydantic_ai.models.test import TestModel
 
 from app.main import app
-from app.models.scores import RingScores
-from app.services.chat_agent import chat_agent
-from app.services.scoring_agent import scoring_agent
+from app.models.graph import SessionState
+from app.services import chat_agent as chat_agent_module
+from app.services.extractor_agent import extractor_agent
 from app.services.sessions import session_store
 
 
 @pytest.fixture(autouse=True)
 def _clear_sessions():
     session_store._sessions.clear()
-    session_store._scores.clear()
+    session_store._state.clear()
     yield
     session_store._sessions.clear()
-    session_store._scores.clear()
+    session_store._state.clear()
 
 
 @pytest.fixture(autouse=True)
-def _mock_agent():
-    with chat_agent.override(model=TestModel(custom_output_text="Test response")):
-        yield
+def _mock_chat_model():
+    original = chat_agent_module.chat_model
+    chat_agent_module.chat_model = TestModel(custom_output_text="Test response")
+    yield
+    chat_agent_module.chat_model = original
 
 
 @pytest.fixture(autouse=True)
-def _mock_scoring_agent():
-    with scoring_agent.override(model=TestModel(custom_output_args=RingScores().model_dump())):
+def _mock_extractor_agent():
+    with extractor_agent.override(
+        model=TestModel(custom_output_args=SessionState().model_dump())
+    ):
         yield
 
 

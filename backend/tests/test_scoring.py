@@ -3,56 +3,63 @@ import json
 import pytest
 from pydantic_ai.models.test import TestModel
 
+from app.models.graph import SessionState
 from app.models.scores import DimensionScore, RingScores
-from app.services.scoring_agent import scoring_agent
+from app.services.extractor_agent import extractor_agent
 from app.services.sessions import session_store
 
 
 @pytest.mark.anyio
-async def test_scoring_agent_returns_ring_scores():
-    result = await scoring_agent.run("Evaluate this project")
-    assert isinstance(result.output, RingScores)
+async def test_extractor_agent_returns_session_state():
+    result = await extractor_agent.run("Evaluate this project")
+    assert isinstance(result.output, SessionState)
 
 
 @pytest.mark.anyio
-async def test_scoring_agent_custom_output():
-    custom = RingScores(
-        value=DimensionScore(value=75, confidence=40),
-        feasibility=DimensionScore(value=60, confidence=30),
-        scalability=DimensionScore(value=0, confidence=5),
+async def test_extractor_agent_custom_output():
+    custom = SessionState(
+        scores=RingScores(
+            value=DimensionScore(value=75, confidence=40),
+            feasibility=DimensionScore(value=60, confidence=30),
+            scalability=DimensionScore(value=0, confidence=5),
+        )
     )
-    with scoring_agent.override(model=TestModel(custom_output_args=custom.model_dump())):
-        result = await scoring_agent.run("Test input")
-        assert result.output.value.value == 75
-        assert result.output.feasibility.confidence == 30
-        assert result.output.scalability.confidence == 5
+    with extractor_agent.override(
+        model=TestModel(custom_output_args=custom.model_dump())
+    ):
+        result = await extractor_agent.run("Test input")
+        assert result.output.scores.value.value == 75
+        assert result.output.scores.feasibility.confidence == 30
+        assert result.output.scores.scalability.confidence == 5
 
 
-def test_session_store_initializes_scores():
+def test_session_store_initializes_state():
     session_id = session_store.create()
-    scores = session_store.get_scores(session_id)
-    assert scores is not None
-    assert scores.value.confidence == 0
-    assert scores.feasibility.confidence == 0
-    assert scores.scalability.confidence == 0
+    state = session_store.get_state(session_id)
+    assert state is not None
+    assert state.scores.value.confidence == 0
+    assert state.scores.feasibility.confidence == 0
+    assert state.scores.scalability.confidence == 0
 
 
-def test_session_store_updates_scores():
+def test_session_store_updates_state():
     session_id = session_store.create()
-    new_scores = RingScores(
-        value=DimensionScore(value=80, confidence=50),
-        feasibility=DimensionScore(value=40, confidence=20),
-        scalability=DimensionScore(value=0, confidence=0),
+    new_state = SessionState(
+        scores=RingScores(
+            value=DimensionScore(value=80, confidence=50),
+            feasibility=DimensionScore(value=40, confidence=20),
+            scalability=DimensionScore(value=0, confidence=0),
+        )
     )
-    session_store.set_scores(session_id, new_scores)
-    stored = session_store.get_scores(session_id)
+    session_store.set_state(session_id, new_state)
+    stored = session_store.get_state(session_id)
     assert stored is not None
-    assert stored.value.value == 80
-    assert stored.feasibility.confidence == 20
+    assert stored.scores.value.value == 80
+    assert stored.scores.feasibility.confidence == 20
 
 
-def test_session_store_get_scores_unknown_session():
-    assert session_store.get_scores("nonexistent") is None
+def test_session_store_get_state_unknown_session():
+    assert session_store.get_state("nonexistent") is None
 
 
 @pytest.mark.anyio
@@ -87,7 +94,7 @@ async def test_stream_emits_scores_event(client):
 
 
 @pytest.mark.anyio
-async def test_scores_persist_across_turns(client):
+async def test_state_persists_across_turns(client):
     # First turn
     resp1 = await client.post(
         "/api/chat/stream", json={"message": "first message"}
@@ -99,8 +106,8 @@ async def test_scores_persist_across_turns(client):
 
     session_id = next(e["session_id"] for e in events1 if e["type"] == "session")
 
-    # Verify scores stored in session
-    stored = session_store.get_scores(session_id)
+    # Verify state stored in session
+    stored = session_store.get_state(session_id)
     assert stored is not None
 
     # Second turn — same session

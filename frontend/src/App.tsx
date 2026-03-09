@@ -1,10 +1,13 @@
 import { useChat } from '@/hooks/useChat'
 import ChatPanel from '@/components/ChatPanel'
+import DebugPanel from '@/components/DebugPanel'
 import ThreeRings from '@/components/ThreeRings'
 import logo from '@/assets/logo.png'
 
+const DEBUG = import.meta.env.DEV
+
 export default function App() {
-  const { messages, input, setInput, isLoading, error, scores, sendMessage } = useChat()
+  const { messages, input, setInput, isLoading, error, scores, debug, sendMessage } = useChat()
 
   return (
     <div className="flex h-screen flex-col font-body bg-zinc-50">
@@ -33,6 +36,9 @@ export default function App() {
           onSubmit={sendMessage}
         />
       </div>
+
+      {/* Debug panel — dev mode only */}
+      {DEBUG && <DebugPanel debug={debug} />}
     </div>
   )
 }
