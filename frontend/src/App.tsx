@@ -4,7 +4,7 @@ import DebugPanel from '@/components/DebugPanel'
 import ThreeRings from '@/components/ThreeRings'
 import logo from '@/assets/logo.png'
 
-const DEBUG = import.meta.env.DEV
+const DEBUG = import.meta.env.VITE_DEBUG === 'true'
 
 export default function App() {
   const { messages, input, setInput, isLoading, error, scores, debug, sendMessage } = useChat()
