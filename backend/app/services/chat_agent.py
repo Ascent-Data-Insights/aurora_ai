@@ -7,7 +7,7 @@ from app.config import settings
 provider = AnthropicProvider(api_key=settings.api_key)
 model = AnthropicModel(settings.model_heavy, provider=provider)
 
-agent = Agent(
+chat_agent = Agent(
     model,
     system_prompt=(
         "You are a strategic intelligence assistant specializing in portfolio strategy. "

@@ -1,5 +1,6 @@
 import { useChat } from '@/hooks/useChat'
 import ChatPanel from '@/components/ChatPanel'
+import ThreeRings from '@/components/ThreeRings'
 import logo from '@/assets/logo.png'
 
 export default function App() {
@@ -16,6 +17,11 @@ export default function App() {
         <h1 className="font-heading text-lg font-semibold text-primary">Portfolio Strategy</h1>
       </header>
 
+      {/* Score rings strip */}
+      <div className="flex justify-end border-b border-zinc-200 bg-white px-6 py-3">
+        <ThreeRings scores={scores} />
+      </div>
+
       {/* Chat */}
       <div className="flex min-h-0 flex-1 flex-col">
         <ChatPanel
@@ -24,7 +30,6 @@ export default function App() {
           setInput={setInput}
           isLoading={isLoading}
           error={error}
-          scores={scores}
           onSubmit={sendMessage}
         />
       </div>

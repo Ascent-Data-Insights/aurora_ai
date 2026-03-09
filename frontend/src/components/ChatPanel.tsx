@@ -1,9 +1,8 @@
 import { useRef, useEffect } from 'react'
 import { Send, Loader2, AlertCircle } from 'lucide-react'
 import { Button } from '@components/button'
-import type { Message, Scores } from '@/hooks/useChat'
+import type { Message } from '@/hooks/useChat'
 import { useTypingEffect } from '@/hooks/useTypingEffect'
-import ThreeRings from './ThreeRings'
 import Markdown from 'react-markdown'
 import clsx from 'clsx'
 
@@ -13,7 +12,6 @@ interface ChatPanelProps {
   setInput: (value: string) => void
   isLoading: boolean
   error: string | null
-  scores: Scores
   onSubmit: () => void
 }
 
@@ -63,7 +61,6 @@ export default function ChatPanel({
   setInput,
   isLoading,
   error,
-  scores,
   onSubmit,
 }: ChatPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -91,13 +88,6 @@ export default function ChatPanel({
     <div className="flex h-full flex-col">
       {/* Messages area */}
       <div ref={scrollRef} className="relative flex-1 overflow-y-auto p-6 space-y-4">
-        {/* Three Rings - top right */}
-        <div className="sticky top-0 z-10 flex justify-end pointer-events-none">
-          <div className="pointer-events-auto">
-            <ThreeRings scores={scores} />
-          </div>
-        </div>
-
         {messages.length === 0 && (
           <div className="flex h-full items-center justify-center">
             <div className="text-center">

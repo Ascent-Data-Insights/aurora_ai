@@ -4,7 +4,7 @@ from pydantic_ai.models.test import TestModel
 
 from app.main import app
 from app.models.scores import RingScores
-from app.services.agent import agent
+from app.services.chat_agent import chat_agent
 from app.services.scoring_agent import scoring_agent
 from app.services.sessions import session_store
 
@@ -20,7 +20,7 @@ def _clear_sessions():
 
 @pytest.fixture(autouse=True)
 def _mock_agent():
-    with agent.override(model=TestModel(custom_output_text="Test response")):
+    with chat_agent.override(model=TestModel(custom_output_text="Test response")):
         yield
 
 

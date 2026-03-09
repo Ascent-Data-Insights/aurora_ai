@@ -6,7 +6,7 @@ from fastapi.responses import StreamingResponse
 
 from app.models.chat import ChatRequest, ChatResponse, MessageEntry, SessionResponse
 from app.models.scores import RingScores
-from app.services.agent import agent
+from app.services.chat_agent import chat_agent
 from app.services.scoring_agent import scoring_agent
 from app.services.sessions import session_store
 
@@ -30,7 +30,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
     if message_history is None:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    result = await agent.run(request.message, message_history=message_history)
+    result = await chat_agent.run(request.message, message_history=message_history)
 
     # Save updated history
     session_store.set(session_id, result.all_messages())
@@ -51,7 +51,7 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
         yield f"data: {json.dumps({'type': 'session', 'session_id': session_id})}\n\n"
 
         assistant_response = ""
-        async with agent.run_stream(
+        async with chat_agent.run_stream(
             request.message, message_history=message_history
         ) as stream:
             async for chunk in stream.stream_text(delta=True):
