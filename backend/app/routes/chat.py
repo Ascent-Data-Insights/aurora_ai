@@ -1,11 +1,16 @@
 import json
+import logging
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
 from app.models.chat import ChatRequest, ChatResponse, MessageEntry, SessionResponse
+from app.models.scores import RingScores
 from app.services.agent import agent
+from app.services.scoring_agent import scoring_agent
 from app.services.sessions import session_store
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -45,14 +50,30 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
         # Send session_id as the first event
         yield f"data: {json.dumps({'type': 'session', 'session_id': session_id})}\n\n"
 
+        assistant_response = ""
         async with agent.run_stream(
             request.message, message_history=message_history
         ) as stream:
             async for chunk in stream.stream_text(delta=True):
+                assistant_response += chunk
                 yield f"data: {json.dumps({'type': 'delta', 'content': chunk})}\n\n"
 
             # Save history after stream completes
             session_store.set(session_id, stream.all_messages())
+
+        # Run scoring agent after chat completes
+        try:
+            current_scores = session_store.get_scores(session_id) or RingScores()
+            scoring_input = (
+                f"Current scores:\n{current_scores.model_dump_json()}\n\n"
+                f"Latest user message:\n{request.message}\n\n"
+                f"Latest assistant response:\n{assistant_response}"
+            )
+            result = await scoring_agent.run(scoring_input)
+            session_store.set_scores(session_id, result.output)
+            yield f"data: {json.dumps({'type': 'scores', **result.output.model_dump()})}\n\n"
+        except Exception:
+            logger.exception("Scoring agent failed")
 
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
 

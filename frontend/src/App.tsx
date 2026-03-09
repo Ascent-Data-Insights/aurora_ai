@@ -3,7 +3,7 @@ import ChatPanel from '@/components/ChatPanel'
 import logo from '@/assets/logo.png'
 
 export default function App() {
-  const { messages, input, setInput, isLoading, error, sendMessage } = useChat()
+  const { messages, input, setInput, isLoading, error, scores, sendMessage } = useChat()
 
   return (
     <div className="flex h-screen flex-col font-body bg-zinc-50">
@@ -24,6 +24,7 @@ export default function App() {
           setInput={setInput}
           isLoading={isLoading}
           error={error}
+          scores={scores}
           onSubmit={sendMessage}
         />
       </div>

@@ -6,6 +6,23 @@ export interface Message {
   content: string
 }
 
+export interface DimensionScore {
+  value: number
+  confidence: number
+}
+
+export interface Scores {
+  value: DimensionScore
+  feasibility: DimensionScore
+  scalability: DimensionScore
+}
+
+const INITIAL_SCORES: Scores = {
+  value: { value: 0, confidence: 0 },
+  feasibility: { value: 0, confidence: 0 },
+  scalability: { value: 0, confidence: 0 },
+}
+
 const API_BASE = 'http://localhost:8000'
 
 export function useChat() {
@@ -13,6 +30,7 @@ export function useChat() {
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [scores, setScores] = useState<Scores>(INITIAL_SCORES)
   const sessionIdRef = useRef<string | null>(null)
 
   const sendMessage = useCallback(async (content?: string) => {
@@ -84,6 +102,12 @@ export function useChat() {
                     : m
                 )
               )
+            } else if (event.type === 'scores') {
+              setScores({
+                value: event.value,
+                feasibility: event.feasibility,
+                scalability: event.scalability,
+              })
             }
             // 'done' — nothing to do, loop will exit on reader.read()
           } catch {
@@ -111,8 +135,9 @@ export function useChat() {
     setMessages([])
     setInput('')
     setError(null)
+    setScores(INITIAL_SCORES)
     sessionIdRef.current = null
   }, [])
 
-  return { messages, input, setInput, isLoading, error, sendMessage, resetChat }
+  return { messages, input, setInput, isLoading, error, scores, sendMessage, resetChat }
 }
