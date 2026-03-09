@@ -43,7 +43,11 @@ async def chat(request: ChatRequest) -> ChatResponse:
     _phase, guidance = get_phase_guidance(state)
     agent = build_chat_agent(guidance)
 
-    result = await agent.run(request.message, message_history=message_history)
+    result = await agent.run(
+        request.message,
+        message_history=message_history,
+        model_settings={"anthropic_cache_instructions": True},
+    )
     session_store.set(session_id, result.all_messages())
 
     return ChatResponse(message=result.output, session_id=session_id)
@@ -70,7 +74,9 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
 
         assistant_response = ""
         async with agent.run_stream(
-            request.message, message_history=message_history
+            request.message,
+            message_history=message_history,
+            model_settings={"anthropic_cache_instructions": True},
         ) as stream:
             async for chunk in stream.stream_text(delta=True):
                 assistant_response += chunk
@@ -86,7 +92,10 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
                 f"Latest user message:\n{request.message}\n\n"
                 f"Latest assistant response:\n{assistant_response}"
             )
-            result = await extractor_agent.run(extractor_input)
+            result = await extractor_agent.run(
+                extractor_input,
+                model_settings={"anthropic_cache_instructions": True},
+            )
             new_state = result.output
             session_store.set_state(session_id, new_state)
 
