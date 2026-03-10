@@ -12,7 +12,7 @@ from pydantic_ai.providers.anthropic import AnthropicProvider
 from app.config import settings
 from app.models.graph import SessionState
 
-provider = AnthropicProvider(api_key=settings.api_key)
+provider = AnthropicProvider(api_key=settings.anthropic_api_key)
 model = AnthropicModel(settings.model_light, provider=provider)
 
 EXTRACTOR_SYSTEM_PROMPT = """\

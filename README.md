@@ -56,14 +56,16 @@ infra/      Azure infrastructure-as-code and deployment config
 Create `backend/.env`:
 
 ```
-API_KEY=<your-anthropic-api-key>
+ANTHROPIC_API_KEY=<your-anthropic-api-key>
+CARTESIA_API_KEY=<your-cartesia-api-key>
 MODEL_HEAVY="claude-sonnet-4-20250514"
 MODEL_LIGHT="claude-haiku-4-5-20251001"
 ```
 
 | Variable | Required | Description |
 |---|---|---|
-| `API_KEY` | Yes | Anthropic API key |
+| `ANTHROPIC_API_KEY` | Yes | Anthropic API key |
+| `CARTESIA_API_KEY` | No | Cartesia API key for voice responses (get one at [cartesia.ai](https://cartesia.ai)) |
 | `MODEL_HEAVY` | No | Model for complex reasoning (defaults to `claude-sonnet-4-6`) |
 | `MODEL_LIGHT` | No | Model for simple structured tasks (defaults to `claude-haiku-4-5-20251001`) |
 

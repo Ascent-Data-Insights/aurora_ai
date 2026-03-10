@@ -5,7 +5,7 @@ from pydantic_ai.providers.anthropic import AnthropicProvider
 
 from app.config import settings
 
-provider = AnthropicProvider(api_key=settings.api_key)
+provider = AnthropicProvider(api_key=settings.anthropic_api_key)
 _default_model: Model = AnthropicModel(settings.model_heavy, provider=provider)
 
 # Tests can swap this to TestModel

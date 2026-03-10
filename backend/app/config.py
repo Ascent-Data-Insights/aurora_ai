@@ -9,9 +9,5 @@ class Settings(BaseSettings):
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 
-    @property
-    def api_key(self) -> str:
-        return self.anthropic_api_key
-
 
 settings = Settings()  # type: ignore[call-arg]
