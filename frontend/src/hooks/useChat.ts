@@ -144,6 +144,18 @@ export function useChat() {
     }
   }, [input, isLoading])
 
+  const addAssistantMessage = useCallback((content: string, role: 'user' | 'assistant', existingId?: string) => {
+    const id = existingId ?? crypto.randomUUID()
+    setMessages(prev => {
+      // If updating an existing message, replace it
+      if (existingId) {
+        return prev.map(m => m.id === existingId ? { ...m, content } : m)
+      }
+      return [...prev, { id, role, content }]
+    })
+    return id
+  }, [])
+
   const resetChat = useCallback(() => {
     setMessages([])
     setInput('')
@@ -153,5 +165,5 @@ export function useChat() {
     sessionIdRef.current = null
   }, [])
 
-  return { messages, input, setInput, isLoading, error, scores, debug, sendMessage, resetChat }
+  return { messages, input, setInput, isLoading, error, scores, debug, sendMessage, resetChat, setScores, setDebug, addAssistantMessage }
 }

@@ -1,4 +1,6 @@
+import { useState, useCallback } from 'react'
 import { useChat } from '@/hooks/useChat'
+import { useVoiceChat } from '@/hooks/useVoiceChat'
 import ChatPanel from '@/components/ChatPanel'
 import DebugPanel from '@/components/DebugPanel'
 import ThreeRings from '@/components/ThreeRings'
@@ -7,7 +9,37 @@ import logo from '@/assets/logo.png'
 const DEBUG = import.meta.env.VITE_DEBUG === 'true'
 
 export default function App() {
-  const { messages, input, setInput, isLoading, error, scores, debug, sendMessage } = useChat()
+  const { messages, input, setInput, isLoading, error, scores, debug, sendMessage, setScores, setDebug, addAssistantMessage } = useChat()
+  const [voiceEnabled, setVoiceEnabled] = useState(false)
+
+  const { isPlaying, sendVoiceMessage } = useVoiceChat(
+    setScores,
+    DEBUG ? setDebug : undefined,
+  )
+
+  const handleSubmit = useCallback(async (content?: string) => {
+    const text = (content ?? input).trim()
+    if (!text) return
+
+    if (voiceEnabled) {
+      setInput('')
+      // Add user message immediately
+      addAssistantMessage(text, 'user')
+      const assistantId = addAssistantMessage('', 'assistant')
+
+      try {
+        await sendVoiceMessage(text, (transcript) => {
+          // Update assistant message with full transcript when done
+          addAssistantMessage(transcript, 'assistant', assistantId)
+        })
+      } catch {
+        // Fall back to text on voice error
+        await sendMessage(text)
+      }
+    } else {
+      await sendMessage(content)
+    }
+  }, [input, voiceEnabled, sendMessage, sendVoiceMessage, setInput, addAssistantMessage])
 
   return (
     <div className="flex h-screen flex-col font-body bg-zinc-50">
@@ -31,9 +63,12 @@ export default function App() {
           messages={messages}
           input={input}
           setInput={setInput}
-          isLoading={isLoading}
+          isLoading={isLoading || isPlaying}
           error={error}
-          onSubmit={sendMessage}
+          onSubmit={handleSubmit}
+          voiceEnabled={voiceEnabled}
+          onToggleVoice={() => setVoiceEnabled(v => !v)}
+          isPlaying={isPlaying}
         />
       </div>
 

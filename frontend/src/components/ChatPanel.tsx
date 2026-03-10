@@ -1,5 +1,5 @@
 import { useRef, useEffect } from 'react'
-import { Send, Loader2, AlertCircle } from 'lucide-react'
+import { Send, Loader2, AlertCircle, Volume2, VolumeX } from 'lucide-react'
 import { Button } from '@components/button'
 import type { Message } from '@/hooks/useChat'
 import { useTypingEffect } from '@/hooks/useTypingEffect'
@@ -13,6 +13,9 @@ interface ChatPanelProps {
   isLoading: boolean
   error: string | null
   onSubmit: () => void
+  voiceEnabled: boolean
+  onToggleVoice: () => void
+  isPlaying: boolean
 }
 
 function MessageBubble({ message, isStreaming }: { message: Message; isStreaming?: boolean }) {
@@ -62,6 +65,9 @@ export default function ChatPanel({
   isLoading,
   error,
   onSubmit,
+  voiceEnabled,
+  onToggleVoice,
+  isPlaying,
 }: ChatPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -146,17 +152,29 @@ export default function ChatPanel({
               target.style.height = Math.min(target.scrollHeight, 128) + 'px'
             }}
           />
+          <button
+            onClick={onToggleVoice}
+            className={clsx(
+              'shrink-0 rounded-lg p-3 transition-colors',
+              voiceEnabled
+                ? 'bg-secondary text-white'
+                : 'bg-zinc-100 text-zinc-400 hover:text-zinc-600'
+            )}
+            title={voiceEnabled ? 'Voice responses on' : 'Voice responses off'}
+          >
+            {voiceEnabled ? <Volume2 className="size-4" /> : <VolumeX className="size-4" />}
+          </button>
           <Button
             color="dark"
             onClick={() => onSubmit()}
-            disabled={!input.trim() || isLoading}
+            disabled={!input.trim() || isLoading || isPlaying}
             className="shrink-0"
           >
             <Send className="size-4" data-slot="icon" />
           </Button>
         </div>
         <p className="mt-2 text-xs text-zinc-400">
-          Press Enter to send, Shift+Enter for new line
+          {isPlaying ? 'Speaking...' : 'Press Enter to send, Shift+Enter for new line'}
         </p>
       </div>
     </div>
