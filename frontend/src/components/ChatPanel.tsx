@@ -1,8 +1,9 @@
-import { useRef, useEffect } from 'react'
-import { Send, Loader2, AlertCircle, Volume2, VolumeX } from 'lucide-react'
+import { useRef, useEffect, useCallback } from 'react'
+import { Send, Loader2, AlertCircle, Volume2, VolumeX, Mic, MicOff, Square } from 'lucide-react'
 import { Button } from '@components/button'
 import type { Message } from '@/hooks/useChat'
 import { useTypingEffect } from '@/hooks/useTypingEffect'
+import { useSpeechToText } from '@/hooks/useSpeechToText'
 import Markdown from 'react-markdown'
 import clsx from 'clsx'
 
@@ -16,6 +17,7 @@ interface ChatPanelProps {
   voiceEnabled: boolean
   onToggleVoice: () => void
   isPlaying: boolean
+  onStopPlayback: () => void
 }
 
 function MessageBubble({ message, isStreaming }: { message: Message; isStreaming?: boolean }) {
@@ -68,9 +70,113 @@ export default function ChatPanel({
   voiceEnabled,
   onToggleVoice,
   isPlaying,
+  onStopPlayback,
 }: ChatPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLTextAreaElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // STT state for tracking insertion position
+  const anchorRef = useRef(0)
+  const interimLenRef = useRef(0)
+  const inputValueRef = useRef(input)
+  inputValueRef.current = input
+
+  const {
+    sttActive,
+    isListening,
+    toggle: toggleStt,
+    mute: muteStt,
+    unmute: unmuteStt,
+    onInterimRef,
+    onFinalRef,
+  } = useSpeechToText()
+
+  // Resize textarea to fit content
+  const resizeTextarea = useCallback(() => {
+    const el = textareaRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = Math.min(el.scrollHeight, 128) + 'px'
+  }, [])
+
+  // Wire up STT callbacks
+  onInterimRef.current = (text: string) => {
+    const currentInput = inputValueRef.current
+    const anchor = anchorRef.current
+    const oldLen = interimLenRef.current
+
+    // Safety: if anchor + oldLen exceeds input length, reset
+    const safeOldLen = anchor + oldLen > currentInput.length ? 0 : oldLen
+
+    // New utterance — capture cursor position
+    if (safeOldLen === 0 && oldLen === 0) {
+      anchorRef.current = textareaRef.current?.selectionStart ?? currentInput.length
+    }
+
+    const a = anchorRef.current
+    const before = currentInput.slice(0, a)
+    const after = currentInput.slice(a + safeOldLen)
+    const newInput = before + text + after
+
+    interimLenRef.current = text.length
+    inputValueRef.current = newInput
+    setInput(newInput)
+
+    // Position cursor after interim text
+    requestAnimationFrame(() => {
+      if (textareaRef.current) {
+        const pos = a + text.length
+        textareaRef.current.selectionStart = pos
+        textareaRef.current.selectionEnd = pos
+      }
+      resizeTextarea()
+    })
+  }
+
+  onFinalRef.current = (text: string) => {
+    const currentInput = inputValueRef.current
+    const anchor = anchorRef.current
+    const oldLen = interimLenRef.current
+
+    // Safety check
+    const safeOldLen = anchor + oldLen > currentInput.length ? 0 : oldLen
+
+    const before = currentInput.slice(0, anchor)
+    const after = currentInput.slice(anchor + safeOldLen)
+    const finalText = text + ' '
+    const newInput = before + finalText + after
+
+    anchorRef.current = anchor + finalText.length
+    interimLenRef.current = 0
+    inputValueRef.current = newInput
+    setInput(newInput)
+
+    requestAnimationFrame(() => {
+      if (textareaRef.current) {
+        const pos = anchor + finalText.length
+        textareaRef.current.selectionStart = pos
+        textareaRef.current.selectionEnd = pos
+      }
+      resizeTextarea()
+    })
+  }
+
+  // Reset STT tracking when input is externally cleared (e.g. on submit)
+  useEffect(() => {
+    if (input === '') {
+      anchorRef.current = 0
+      interimLenRef.current = 0
+    }
+  }, [input])
+
+  // Mute/unmute mic when TTS plays/stops
+  useEffect(() => {
+    if (isPlaying) {
+      muteStt()
+    } else {
+      unmuteStt()
+    }
+  }, [isPlaying, muteStt, unmuteStt])
 
   useEffect(() => {
     scrollRef.current?.scrollTo({
@@ -80,7 +186,7 @@ export default function ChatPanel({
   }, [messages, isLoading])
 
   useEffect(() => {
-    inputRef.current?.focus()
+    textareaRef.current?.focus()
   }, [])
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -89,6 +195,9 @@ export default function ChatPanel({
       onSubmit()
     }
   }
+
+  // Determine mic button state
+  const micMuted = sttActive && isPlaying // STT on but muted due to TTS
 
   return (
     <div className="flex h-full flex-col">
@@ -130,7 +239,7 @@ export default function ChatPanel({
       <div className="border-t border-zinc-200 p-4">
         <div className="flex items-end gap-3">
           <textarea
-            ref={inputRef}
+            ref={textareaRef}
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
@@ -152,6 +261,45 @@ export default function ChatPanel({
               target.style.height = Math.min(target.scrollHeight, 128) + 'px'
             }}
           />
+
+          {/* Mic button — STT toggle */}
+          <button
+            onClick={toggleStt}
+            className={clsx(
+              'relative shrink-0 rounded-lg p-3 transition-colors',
+              sttActive
+                ? micMuted
+                  ? 'bg-zinc-300 text-zinc-500'
+                  : 'bg-red-500 text-white'
+                : 'bg-zinc-100 text-zinc-400 hover:text-zinc-600'
+            )}
+            title={
+              sttActive
+                ? micMuted
+                  ? 'Mic muted (TTS playing)'
+                  : 'Speech-to-text on — click to turn off'
+                : 'Click to enable speech-to-text'
+            }
+          >
+            {sttActive && !micMuted ? (
+              <>
+                <Mic className="size-4" />
+                {/* Pulsing indicator when actively listening */}
+                {isListening && (
+                  <span className="absolute -top-0.5 -right-0.5 flex size-2.5">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75" />
+                    <span className="relative inline-flex size-2.5 rounded-full bg-red-300" />
+                  </span>
+                )}
+              </>
+            ) : sttActive && micMuted ? (
+              <MicOff className="size-4" />
+            ) : (
+              <Mic className="size-4" />
+            )}
+          </button>
+
+          {/* Voice (TTS) toggle */}
           <button
             onClick={onToggleVoice}
             className={clsx(
@@ -164,17 +312,34 @@ export default function ChatPanel({
           >
             {voiceEnabled ? <Volume2 className="size-4" /> : <VolumeX className="size-4" />}
           </button>
-          <Button
-            color="dark"
-            onClick={() => onSubmit()}
-            disabled={!input.trim() || isLoading || isPlaying}
-            className="shrink-0"
-          >
-            <Send className="size-4" data-slot="icon" />
-          </Button>
+
+          {/* Stop / Send button */}
+          {isPlaying ? (
+            <Button
+              color="dark"
+              onClick={onStopPlayback}
+              className="shrink-0"
+              title="Stop playback"
+            >
+              <Square className="size-4" data-slot="icon" />
+            </Button>
+          ) : (
+            <Button
+              color="dark"
+              onClick={() => onSubmit()}
+              disabled={!input.trim() || isLoading}
+              className="shrink-0"
+            >
+              <Send className="size-4" data-slot="icon" />
+            </Button>
+          )}
         </div>
         <p className="mt-2 text-xs text-zinc-400">
-          {isPlaying ? 'Speaking...' : 'Press Enter to send, Shift+Enter for new line'}
+          {isPlaying
+            ? 'Speaking... click stop to interrupt'
+            : sttActive && isListening
+              ? 'Listening... speak to add text'
+              : 'Press Enter to send, Shift+Enter for new line'}
         </p>
       </div>
     </div>

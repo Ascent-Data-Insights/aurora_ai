@@ -12,6 +12,8 @@ export function useVoiceChat(
   const sessionIdRef = useRef<string | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
   const nextPlayTimeRef = useRef(0)
+  const wsRef = useRef<WebSocket | null>(null)
+  const scheduledSourcesRef = useRef<AudioBufferSourceNode[]>([])
 
   const getAudioContext = useCallback(() => {
     if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
@@ -36,6 +38,7 @@ export function useVoiceChat(
       return new Promise<void>((resolve, reject) => {
         const ws = new WebSocket(`${WS_BASE}/api/voice/ws`)
         ws.binaryType = 'arraybuffer'
+        wsRef.current = ws
 
         ws.onopen = () => {
           ws.send(
@@ -66,6 +69,12 @@ export function useVoiceChat(
             const startTime = Math.max(nextPlayTimeRef.current, ctx.currentTime)
             source.start(startTime)
             nextPlayTimeRef.current = startTime + buffer.duration
+
+            // Track for stop functionality
+            scheduledSourcesRef.current.push(source)
+            source.onended = () => {
+              scheduledSourcesRef.current = scheduledSourcesRef.current.filter((s: AudioBufferSourceNode) => s !== source)
+            }
           } else {
             // JSON text message
             const data = JSON.parse(event.data)
@@ -115,5 +124,26 @@ export function useVoiceChat(
     [getAudioContext, onScores, onDebug],
   )
 
-  return { isPlaying, sendVoiceMessage, sessionIdRef }
+  const stopPlayback = useCallback(() => {
+    // Close WebSocket to stop receiving more audio
+    if (wsRef.current) {
+      wsRef.current.close()
+      wsRef.current = null
+    }
+
+    // Stop all scheduled audio sources
+    for (const source of scheduledSourcesRef.current) {
+      try {
+        source.stop()
+      } catch {
+        // Already stopped
+      }
+    }
+    scheduledSourcesRef.current = []
+    nextPlayTimeRef.current = 0
+
+    setIsPlaying(false)
+  }, [])
+
+  return { isPlaying, sendVoiceMessage, stopPlayback, sessionIdRef }
 }

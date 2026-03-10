@@ -12,7 +12,7 @@ export default function App() {
   const { messages, input, setInput, isLoading, error, scores, debug, sendMessage, setScores, setDebug, addAssistantMessage } = useChat()
   const [voiceEnabled, setVoiceEnabled] = useState(false)
 
-  const { isPlaying, sendVoiceMessage } = useVoiceChat(
+  const { isPlaying, sendVoiceMessage, stopPlayback } = useVoiceChat(
     setScores,
     DEBUG ? setDebug : undefined,
   )
@@ -66,6 +66,7 @@ export default function App() {
           voiceEnabled={voiceEnabled}
           onToggleVoice={() => setVoiceEnabled(v => !v)}
           isPlaying={isPlaying}
+          onStopPlayback={stopPlayback}
         />
       </div>
 

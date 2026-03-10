@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routes import chat, voice
+from app.routes import chat, stt, voice
 
 app = FastAPI(title="Portfolio Strategy API")
 
@@ -14,6 +14,7 @@ app.add_middleware(
 )
 
 app.include_router(chat.router)
+app.include_router(stt.router)
 app.include_router(voice.router)
 
 
