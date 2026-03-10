@@ -23,17 +23,14 @@ export default function App() {
 
     if (voiceEnabled) {
       setInput('')
-      // Add user message immediately
       addAssistantMessage(text, 'user')
       const assistantId = addAssistantMessage('', 'assistant')
 
       try {
         await sendVoiceMessage(text, (transcript) => {
-          // Update assistant message with full transcript when done
           addAssistantMessage(transcript, 'assistant', assistantId)
         })
       } catch {
-        // Fall back to text on voice error
         await sendMessage(text)
       }
     } else {

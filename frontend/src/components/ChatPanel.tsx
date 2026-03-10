@@ -160,7 +160,7 @@ export default function ChatPanel({
                 ? 'bg-secondary text-white'
                 : 'bg-zinc-100 text-zinc-400 hover:text-zinc-600'
             )}
-            title={voiceEnabled ? 'Voice responses on' : 'Voice responses off'}
+            title={voiceEnabled ? 'Voice mode on' : 'Voice mode off'}
           >
             {voiceEnabled ? <Volume2 className="size-4" /> : <VolumeX className="size-4" />}
           </button>
