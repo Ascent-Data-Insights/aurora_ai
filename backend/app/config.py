@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     deepgram_api_key: str = ""
     model_heavy: str = "claude-sonnet-4-6"
     model_light: str = "claude-haiku-4-5-20251001"
+    debug: bool = False
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

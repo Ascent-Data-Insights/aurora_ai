@@ -23,8 +23,18 @@ async def voice_chat(ws: WebSocket):
     try:
         while True:
             # Receive a JSON message with session_id and user text
-            data = json.loads(await ws.receive_text())
-            message = data.get("message", "")
+            raw = await ws.receive_text()
+            try:
+                data = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                await ws.send_text(json.dumps({"type": "error", "message": "Invalid JSON"}))
+                continue
+
+            if not isinstance(data, dict):
+                await ws.send_text(json.dumps({"type": "error", "message": "Expected JSON object"}))
+                continue
+
+            message = str(data.get("message", ""))
             session_id = data.get("session_id")
 
             if not session_id:
@@ -79,9 +89,16 @@ async def voice_chat(ws: WebSocket):
             consume_task = asyncio.create_task(consume_events())
             tts_task = asyncio.create_task(run_tts())
 
-            result = await flow_task
-            await consume_task
-            await tts_task
+            try:
+                result = await flow_task
+                await consume_task
+                await tts_task
+            except Exception:
+                consume_task.cancel()
+                tts_task.cancel()
+                logger.exception("Flow graph error in voice WebSocket")
+                await ws.send_text(json.dumps({"type": "error", "message": "Internal server error"}))
+                continue
 
             session_store.set(session_id, result["messages"])
             session_store.set_state(session_id, result["session_state"])

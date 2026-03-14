@@ -8,6 +8,9 @@ import logging
 from langgraph.graph import END, StateGraph
 from langgraph.types import RunnableConfig
 
+from pydantic_ai.messages import ModelRequest
+
+from app.config import settings
 from app.models.flow import FlowState
 from app.models.flow_events import (
     debug_event,
@@ -50,6 +53,10 @@ def _has_queue(config: RunnableConfig) -> bool:
     return config.get("configurable", {}).get("event_queue") is not None
 
 
+def _debug_enabled() -> bool:
+    return getattr(settings, "debug", False)
+
+
 # ---------------------------------------------------------------------------
 # Graph nodes
 # ---------------------------------------------------------------------------
@@ -61,7 +68,8 @@ def route_node(state: FlowState, config: RunnableConfig) -> dict:
     session_state = state["session_state"]
     phase, guidance = get_phase_guidance(session_state)
 
-    emit(config, debug_event(phase.value, guidance, session_state.model_dump()))
+    if _debug_enabled():
+        emit(config, debug_event(phase.value, guidance, session_state.model_dump()))
     emit(config, node_done("route"))
     return {"current_phase": phase}
 
@@ -296,8 +304,6 @@ def _strip_synthetic_prompt(messages: list) -> list:
                 )
             ]
             if filtered_parts:
-                # Reconstruct message without synthetic parts
-                from pydantic_ai.messages import ModelRequest
                 cleaned.append(ModelRequest(parts=filtered_parts))
         else:
             cleaned.append(msg)

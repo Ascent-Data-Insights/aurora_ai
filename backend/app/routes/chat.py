@@ -78,7 +78,13 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
             if event["type"] == "done":
                 break
 
-        result = await task
+        try:
+            result = await task
+        except Exception:
+            logger.exception("Flow graph error during streaming")
+            yield f"data: {json.dumps({'type': 'error', 'message': 'Internal server error'})}\n\n"
+            return
+
         session_store.set(session_id, result["messages"])
         session_store.set_state(session_id, result["session_state"])
 

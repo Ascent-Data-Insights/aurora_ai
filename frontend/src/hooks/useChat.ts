@@ -111,47 +111,49 @@ export function useChat() {
           if (!line.startsWith('data: ')) continue
           const json = line.slice(6)
 
+          let event: Record<string, unknown>
           try {
-            const event = JSON.parse(json)
-
-            if (event.type === 'session') {
-              sessionIdRef.current = event.session_id
-            } else if (event.type === 'message_start') {
-              // Regression loop-back: the graph is running chat again
-              currentAssistantId = crypto.randomUUID()
-              setMessages(prev => [
-                ...prev,
-                { id: currentAssistantId, role: 'assistant', content: '' },
-              ])
-            } else if (event.type === 'delta') {
-              setMessages(prev =>
-                prev.map(m =>
-                  m.id === currentAssistantId
-                    ? { ...m, content: m.content + event.content }
-                    : m
-                )
-              )
-            } else if (event.type === 'scores') {
-              setScores({
-                value: event.value,
-                feasibility: event.feasibility,
-                scalability: event.scalability,
-              })
-            } else if (event.type === 'flow_node') {
-              setFlowNodes(prev => ({ ...prev, [event.node]: event.status }))
-            } else if (event.type === 'regression') {
-              setRegression(event.ring)
-            } else if (event.type === 'debug') {
-              setDebug({
-                phase: event.phase,
-                guidance: event.guidance,
-                state: event.state,
-              })
-            }
-            // 'done' — nothing to do, loop will exit on reader.read()
+            event = JSON.parse(json)
           } catch {
-            // skip malformed lines
+            // skip malformed SSE lines
+            continue
           }
+
+          if (event.type === 'session') {
+            sessionIdRef.current = event.session_id as string
+          } else if (event.type === 'message_start') {
+            // Regression loop-back: the graph is running chat again
+            currentAssistantId = crypto.randomUUID()
+            setMessages(prev => [
+              ...prev,
+              { id: currentAssistantId, role: 'assistant', content: '' },
+            ])
+          } else if (event.type === 'delta') {
+            setMessages(prev =>
+              prev.map(m =>
+                m.id === currentAssistantId
+                  ? { ...m, content: m.content + (event.content as string) }
+                  : m
+              )
+            )
+          } else if (event.type === 'scores') {
+            setScores({
+              value: event.value as DimensionScore,
+              feasibility: event.feasibility as DimensionScore,
+              scalability: event.scalability as DimensionScore,
+            })
+          } else if (event.type === 'flow_node') {
+            setFlowNodes(prev => ({ ...prev, [event.node as string]: event.status }))
+          } else if (event.type === 'regression') {
+            setRegression(event.ring as string)
+          } else if (event.type === 'debug') {
+            setDebug({
+              phase: event.phase as string,
+              guidance: event.guidance as string,
+              state: event.state as Record<string, unknown>,
+            })
+          }
+          // 'done' — nothing to do, loop will exit on reader.read()
         }
       }
     } catch (err) {
