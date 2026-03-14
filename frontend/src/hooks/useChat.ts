@@ -39,6 +39,15 @@ export interface DebugInfo {
   state: Record<string, unknown>
 }
 
+export type FlowNodeStatus = 'idle' | 'active' | 'done'
+
+export interface FlowNodeState {
+  route: FlowNodeStatus
+  chat: FlowNodeStatus
+  extract: FlowNodeStatus
+  detect_regression: FlowNodeStatus
+}
+
 export function useChat() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
@@ -47,6 +56,10 @@ export function useChat() {
   const [scores, setScores] = useState<Scores>(INITIAL_SCORES)
   const [debug, setDebug] = useState<DebugInfo | null>(null)
   const [attachedFiles, setAttachedFiles] = useState<UploadedFile[]>([])
+  const [flowNodes, setFlowNodes] = useState<FlowNodeState>({
+    route: 'idle', chat: 'idle', extract: 'idle', detect_regression: 'idle',
+  })
+  const [regression, setRegression] = useState<string | null>(null)
   const sessionIdRef = useRef<string | null>(null)
 
   const addFiles = useCallback((files: FileList | File[]) => {
@@ -107,6 +120,8 @@ export function useChat() {
 
     setError(null)
     setInput('')
+    setFlowNodes({ route: 'idle', chat: 'idle', extract: 'idle', detect_regression: 'idle' })
+    setRegression(null)
 
     // Ensure we have a session for file uploads
     if (!sessionIdRef.current) {
@@ -146,7 +161,7 @@ export function useChat() {
     setIsLoading(true)
     setAttachedFiles([])
 
-    const assistantId = crypto.randomUUID()
+    let currentAssistantId = crypto.randomUUID()
 
     try {
       const res = await fetch(`${API_BASE}/api/chat/stream`, {
@@ -171,7 +186,7 @@ export function useChat() {
       // Add empty assistant message that we'll stream into
       setMessages(prev => [
         ...prev,
-        { id: assistantId, role: 'assistant', content: '' },
+        { id: currentAssistantId, role: 'assistant', content: '' },
       ])
 
       while (true) {
@@ -187,36 +202,49 @@ export function useChat() {
           if (!line.startsWith('data: ')) continue
           const json = line.slice(6)
 
+          let event: Record<string, unknown>
           try {
-            const event = JSON.parse(json)
-
-            if (event.type === 'session') {
-              sessionIdRef.current = event.session_id
-            } else if (event.type === 'delta') {
-              setMessages(prev =>
-                prev.map(m =>
-                  m.id === assistantId
-                    ? { ...m, content: m.content + event.content }
-                    : m
-                )
-              )
-            } else if (event.type === 'scores') {
-              setScores({
-                value: event.value,
-                feasibility: event.feasibility,
-                scalability: event.scalability,
-              })
-            } else if (event.type === 'debug') {
-              setDebug({
-                phase: event.phase,
-                guidance: event.guidance,
-                state: event.state,
-              })
-            }
-            // 'done' — nothing to do, loop will exit on reader.read()
+            event = JSON.parse(json)
           } catch {
-            // skip malformed lines
+            // skip malformed SSE lines
+            continue
           }
+
+          if (event.type === 'session') {
+            sessionIdRef.current = event.session_id as string
+          } else if (event.type === 'message_start') {
+            // Regression loop-back: the graph is running chat again
+            currentAssistantId = crypto.randomUUID()
+            setMessages(prev => [
+              ...prev,
+              { id: currentAssistantId, role: 'assistant', content: '' },
+            ])
+          } else if (event.type === 'delta') {
+            setMessages(prev =>
+              prev.map(m =>
+                m.id === currentAssistantId
+                  ? { ...m, content: m.content + (event.content as string) }
+                  : m
+              )
+            )
+          } else if (event.type === 'scores') {
+            setScores({
+              value: event.value as DimensionScore,
+              feasibility: event.feasibility as DimensionScore,
+              scalability: event.scalability as DimensionScore,
+            })
+          } else if (event.type === 'flow_node') {
+            setFlowNodes(prev => ({ ...prev, [event.node as string]: event.status }))
+          } else if (event.type === 'regression') {
+            setRegression(event.ring as string)
+          } else if (event.type === 'debug') {
+            setDebug({
+              phase: event.phase as string,
+              guidance: event.guidance as string,
+              state: event.state as Record<string, unknown>,
+            })
+          }
+          // 'done' — nothing to do, loop will exit on reader.read()
         }
       }
     } catch (err) {
@@ -225,7 +253,7 @@ export function useChat() {
       // Remove empty assistant message if we errored before any content
       setMessages(prev => {
         const last = prev[prev.length - 1]
-        if (last?.id === assistantId && !last.content) {
+        if (last?.id === currentAssistantId && !last.content) {
           return prev.slice(0, -1)
         }
         return prev
@@ -257,5 +285,5 @@ export function useChat() {
     sessionIdRef.current = null
   }, [])
 
-  return { messages, input, setInput, isLoading, error, scores, debug, sendMessage, resetChat, setScores, setDebug, addAssistantMessage, attachedFiles, addFiles, removeFile }
+  return { messages, input, setInput, isLoading, error, scores, debug, flowNodes, regression, sendMessage, resetChat, setScores, setDebug, addAssistantMessage, attachedFiles, addFiles, removeFile }
 }

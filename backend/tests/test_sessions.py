@@ -30,17 +30,24 @@ async def test_list_sessions(client):
 async def test_create_session(client):
     resp = await client.post("/api/chat/sessions")
     assert resp.status_code == 200
-    assert "session_id" in resp.json()
+    data = resp.json()
+    assert "session_id" in data
+    assert "first_message" in data
+    assert data["first_message"] is not None
 
 
 @pytest.mark.anyio
-async def test_get_messages_empty_session(client):
+async def test_get_messages_after_session_creation(client):
+    """Session creation generates a first message, so messages should contain it."""
     session_resp = await client.post("/api/chat/sessions")
     session_id = session_resp.json()["session_id"]
 
     resp = await client.get(f"/api/chat/sessions/{session_id}/messages")
     assert resp.status_code == 200
-    assert resp.json() == []
+    messages = resp.json()
+    # First message is the agent's greeting (no user message since synthetic prompt is stripped)
+    assert len(messages) >= 1
+    assert messages[0]["role"] == "assistant"
 
 
 @pytest.mark.anyio

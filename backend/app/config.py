@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     model_light: str = "claude-haiku-4-5-20251001"
     database_url: str = "postgresql+asyncpg://aurora:aurora@localhost:5432/aurora"
     cors_origins: list[str] = ["http://localhost:3000"]
+    debug: bool = False
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

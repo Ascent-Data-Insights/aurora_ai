@@ -3,14 +3,14 @@
 import asyncio
 import json
 import logging
+import time
+from collections import defaultdict
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.db import async_session_factory
 from app.models.graph import SessionState
-from app.services.chat_agent import build_chat_agent
-from app.services.extractor_agent import extractor_agent
-from app.services.phase import get_phase_guidance
+from app.services.flow_graph import run_flow_streaming
 from app.services import sessions
 from app.services.tts import stream_tts
 
@@ -18,16 +18,46 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/voice", tags=["voice"])
 
+# Simple per-IP rate limiter for WebSocket messages
+_ws_timestamps: dict[str, list[float]] = defaultdict(list)
+_WS_RATE_LIMIT = 20  # max messages per minute
+
+
+def _ws_rate_limited(ip: str) -> bool:
+    now = time.monotonic()
+    timestamps = _ws_timestamps[ip]
+    # Prune old entries
+    _ws_timestamps[ip] = [t for t in timestamps if now - t < 60]
+    if len(_ws_timestamps[ip]) >= _WS_RATE_LIMIT:
+        return True
+    _ws_timestamps[ip].append(now)
+    return False
+
 
 @router.websocket("/ws")
 async def voice_chat(ws: WebSocket):
     await ws.accept()
+    client_ip = ws.client.host if ws.client else "unknown"
 
     try:
         while True:
             # Receive a JSON message with session_id and user text
-            data = json.loads(await ws.receive_text())
-            message = data.get("message", "")
+            raw = await ws.receive_text()
+
+            if _ws_rate_limited(client_ip):
+                await ws.send_text(json.dumps({"type": "error", "message": "Rate limit exceeded"}))
+                continue
+            try:
+                data = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                await ws.send_text(json.dumps({"type": "error", "message": "Invalid JSON"}))
+                continue
+
+            if not isinstance(data, dict):
+                await ws.send_text(json.dumps({"type": "error", "message": "Expected JSON object"}))
+                continue
+
+            message = str(data.get("message", ""))
             session_id = data.get("session_id")
 
             async with async_session_factory() as db:
@@ -42,81 +72,66 @@ async def voice_chat(ws: WebSocket):
                 # Send session info
                 await ws.send_text(json.dumps({"type": "session", "session_id": session_id}))
 
-                # Build phase-aware agent
                 state = await sessions.get_state(db, session_id) or SessionState()
-                phase, guidance = get_phase_guidance(state)
-                agent = build_chat_agent(guidance)
-
-                # Queue for piping Claude text chunks to TTS
+                queue: asyncio.Queue = asyncio.Queue()
                 text_queue: asyncio.Queue[str | None] = asyncio.Queue()
 
-                async def text_chunk_iter():
-                    """Async iterator that drains the text queue."""
+                flow_task = asyncio.create_task(
+                    run_flow_streaming(state, message_history, message, queue)
+                )
+
+                async def consume_events():
+                    """Drain events from the flow graph, forwarding to WS and TTS."""
                     while True:
-                        chunk = await text_queue.get()
-                        if chunk is None:
-                            return
-                        yield chunk
+                        event = await queue.get()
+                        evt_type = event["type"]
 
-                async def run_llm():
-                    """Stream Claude's response and push text chunks to the queue."""
-                    assistant_response = ""
-                    try:
-                        async with agent.run_stream(
-                            message,
-                            message_history=message_history,
-                            model_settings={"anthropic_cache_instructions": True},
-                        ) as stream:
-                            async for chunk in stream.stream_text(delta=True):
-                                assistant_response += chunk
-                                await text_queue.put(chunk)
+                        # Fork text deltas to the TTS queue
+                        if evt_type == "delta":
+                            await text_queue.put(event["content"])
 
-                            await sessions.set(db, session_id, stream.all_messages())
-                    finally:
-                        await text_queue.put(None)  # Signal end of text
+                        # Forward relevant events to the WebSocket client
+                        if evt_type in ("scores", "regression", "debug", "flow_node"):
+                            await ws.send_text(json.dumps(event))
 
-                    return assistant_response
+                        if evt_type == "done":
+                            await text_queue.put(None)  # Signal TTS end
+                            break
 
                 async def run_tts():
                     """Stream TTS audio chunks back to the client."""
+                    async def text_chunk_iter():
+                        while True:
+                            chunk = await text_queue.get()
+                            if chunk is None:
+                                return
+                            yield chunk
+
                     async for audio_chunk in stream_tts(text_chunk_iter()):
                         await ws.send_bytes(audio_chunk)
 
-                # Run LLM and TTS concurrently
-                llm_task = asyncio.create_task(run_llm())
+                consume_task = asyncio.create_task(consume_events())
                 tts_task = asyncio.create_task(run_tts())
 
-                assistant_response = await llm_task
-                await tts_task
+                try:
+                    result = await flow_task
+                    await consume_task
+                    await tts_task
+                except Exception:
+                    consume_task.cancel()
+                    tts_task.cancel()
+                    logger.exception("Flow graph error in voice WebSocket")
+                    await ws.send_text(json.dumps({"type": "error", "message": "Internal server error"}))
+                    continue
 
-                # Send text response too (for display)
+                await sessions.set(db, session_id, result["messages"])
+                await sessions.set_state(db, session_id, result["session_state"])
+
+                # Send transcript and done
                 await ws.send_text(json.dumps({
                     "type": "transcript",
-                    "content": assistant_response,
+                    "content": result["assistant_response"],
                 }))
-
-                # Run extractor (non-blocking for audio, but we await for state update)
-                try:
-                    extractor_input = (
-                        f"Current state:\n{state.model_dump_json(indent=2)}\n\n"
-                        f"Current phase: {phase.value}\n\n"
-                        f"Latest user message:\n{message}\n\n"
-                        f"Latest assistant response:\n{assistant_response}"
-                    )
-                    result = await extractor_agent.run(
-                        extractor_input,
-                        model_settings={"anthropic_cache_instructions": True},
-                    )
-                    new_state = result.output
-                    await sessions.set_state(db, session_id, new_state)
-
-                    await ws.send_text(json.dumps({
-                        "type": "scores",
-                        **new_state.scores.model_dump(),
-                    }))
-                except Exception:
-                    logger.exception("Extractor agent failed")
-
                 await ws.send_text(json.dumps({"type": "done"}))
 
     except WebSocketDisconnect:

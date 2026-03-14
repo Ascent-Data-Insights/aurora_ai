@@ -1,17 +1,17 @@
+import asyncio
 import json
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
 from app.models.chat import ChatRequest, ChatResponse, DocumentInfo, MessageEntry, SessionResponse, SessionSummary
 from app.models.graph import SessionState
-from app.services.chat_agent import build_chat_agent
-from app.services.document_parser import SUPPORTED_EXTENSIONS, parse_document
-from app.services.extractor_agent import extractor_agent
-from app.services.phase import get_phase_guidance
+from app.rate_limit import limiter
+from app.services.document_parser import parse_document
+from app.services.flow_graph import run_flow, run_flow_streaming
 from app.services import sessions
 from app.services.sessions import UploadedDocument, _document_store
 
@@ -29,9 +29,17 @@ async def list_sessions(db: AsyncSession = Depends(get_db)) -> list[SessionSumma
 
 
 @router.post("/sessions", response_model=SessionResponse)
-async def create_session(db: AsyncSession = Depends(get_db)) -> SessionResponse:
+@limiter.limit("5/minute")
+async def create_session(request: Request, db: AsyncSession = Depends(get_db)) -> SessionResponse:
     session_id = await sessions.create(db)
-    return SessionResponse(session_id=session_id)
+
+    # Generate agent-initiated first message
+    state = await sessions.get_state(db, session_id) or SessionState()
+    result = await run_flow(state, messages=[], user_message="")
+    await sessions.set(db, session_id, result["messages"])
+    await sessions.set_state(db, session_id, result["session_state"])
+
+    return SessionResponse(session_id=session_id, first_message=result["assistant_response"])
 
 
 @router.post("/upload", response_model=list[DocumentInfo])
@@ -76,32 +84,28 @@ def _build_document_context(session_id: str) -> str:
 
 
 @router.post("", response_model=ChatResponse)
-async def chat(request: ChatRequest, db: AsyncSession = Depends(get_db)) -> ChatResponse:
-    session_id = request.session_id or await sessions.create(db)
+@limiter.limit("20/minute")
+async def chat(request: Request, body: ChatRequest, db: AsyncSession = Depends(get_db)) -> ChatResponse:
+    session_id = body.session_id or await sessions.create(db)
 
     message_history = await sessions.get(db, session_id)
     if message_history is None:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    # Build phase-aware chat agent
     state = await sessions.get_state(db, session_id) or SessionState()
-    _phase, guidance = get_phase_guidance(state)
     doc_context = _build_document_context(session_id)
-    agent = build_chat_agent(guidance, document_context=doc_context)
+    result = await run_flow(state, messages=message_history, user_message=body.message, document_context=doc_context)
 
-    result = await agent.run(
-        request.message,
-        message_history=message_history,
-        model_settings={"anthropic_cache_instructions": True},
-    )
-    await sessions.set(db, session_id, result.all_messages())
+    await sessions.set(db, session_id, result["messages"])
+    await sessions.set_state(db, session_id, result["session_state"])
 
-    return ChatResponse(message=result.output, session_id=session_id)
+    return ChatResponse(message=result["assistant_response"], session_id=session_id)
 
 
 @router.post("/stream")
-async def chat_stream(request: ChatRequest, db: AsyncSession = Depends(get_db)) -> StreamingResponse:
-    session_id = request.session_id or await sessions.create(db)
+@limiter.limit("20/minute")
+async def chat_stream(request: Request, body: ChatRequest, db: AsyncSession = Depends(get_db)) -> StreamingResponse:
+    session_id = body.session_id or await sessions.create(db)
 
     message_history = await sessions.get(db, session_id)
     if message_history is None:
@@ -110,55 +114,30 @@ async def chat_stream(request: ChatRequest, db: AsyncSession = Depends(get_db)) 
     async def event_generator():
         yield f"data: {json.dumps({'type': 'session', 'session_id': session_id})}\n\n"
 
-        # Build phase-aware chat agent
         state = await sessions.get_state(db, session_id) or SessionState()
-        phase, guidance = get_phase_guidance(state)
         doc_context = _build_document_context(session_id)
-        agent = build_chat_agent(guidance, document_context=doc_context)
+        queue: asyncio.Queue = asyncio.Queue()
 
-        # Emit debug info: phase + state before this turn
-        yield f"data: {json.dumps({'type': 'debug', 'phase': phase.value, 'guidance': guidance, 'state': state.model_dump()})}\n\n"
+        task = asyncio.create_task(
+            run_flow_streaming(state, message_history, body.message, queue, document_context=doc_context)
+        )
 
-        assistant_response = ""
-        async with agent.run_stream(
-            request.message,
-            message_history=message_history,
-            model_settings={"anthropic_cache_instructions": True},
-        ) as stream:
-            async for chunk in stream.stream_text(delta=True):
-                assistant_response += chunk
-                yield f"data: {json.dumps({'type': 'delta', 'content': chunk})}\n\n"
+        # Drain events from the graph and yield as SSE
+        while True:
+            event = await queue.get()
+            yield f"data: {json.dumps(event)}\n\n"
+            if event["type"] == "done":
+                break
 
-            await sessions.set(db, session_id, stream.all_messages())
-
-        # Run extractor agent after chat completes
         try:
-            extractor_parts = [
-                f"Current state:\n{state.model_dump_json(indent=2)}",
-                f"Current phase: {phase.value}",
-            ]
-            if doc_context:
-                extractor_parts.append(f"Uploaded documents:\n{doc_context}")
-            extractor_parts.append(f"Latest user message:\n{request.message}")
-            extractor_parts.append(f"Latest assistant response:\n{assistant_response}")
-            extractor_input = "\n\n".join(extractor_parts)
-            result = await extractor_agent.run(
-                extractor_input,
-                model_settings={"anthropic_cache_instructions": True},
-            )
-            new_state = result.output
-            await sessions.set_state(db, session_id, new_state)
-
-            # Emit scores for the frontend (same shape as before)
-            yield f"data: {json.dumps({'type': 'scores', **new_state.scores.model_dump()})}\n\n"
-
-            # Emit updated debug info after extraction
-            new_phase, new_guidance = get_phase_guidance(new_state)
-            yield f"data: {json.dumps({'type': 'debug', 'phase': new_phase.value, 'guidance': new_guidance, 'state': new_state.model_dump()})}\n\n"
+            result = await task
         except Exception:
-            logger.exception("Extractor agent failed")
+            logger.exception("Flow graph error during streaming")
+            yield f"data: {json.dumps({'type': 'error', 'message': 'Internal server error'})}\n\n"
+            return
 
-        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        await sessions.set(db, session_id, result["messages"])
+        await sessions.set_state(db, session_id, result["session_state"])
 
     return StreamingResponse(
         event_generator(),
