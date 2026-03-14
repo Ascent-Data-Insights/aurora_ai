@@ -5,7 +5,7 @@ from docx import Document as DocxDocument
 from pptx import Presentation
 from pptx.util import Inches
 
-from app.services.sessions import session_store
+from app.services.sessions import _document_store
 
 
 def _make_docx(text: str = "Hello world") -> bytes:
@@ -42,7 +42,7 @@ async def test_upload_docx(client):
     assert results[0]["ok"] is True
 
     # Verify document is stored in session
-    docs = session_store.get_documents(session_id)
+    docs = _document_store.get(session_id, [])
     assert len(docs) == 1
     assert "Strategic initiative overview" in docs[0].text
 
@@ -60,7 +60,7 @@ async def test_upload_pptx(client):
     results = resp.json()
     assert results[0]["ok"] is True
 
-    docs = session_store.get_documents(session_id)
+    docs = _document_store.get(session_id, [])
     assert "Key findings" in docs[0].text
 
 
@@ -82,7 +82,7 @@ async def test_upload_multiple_files(client):
     assert len(results) == 2
     assert all(r["ok"] for r in results)
 
-    docs = session_store.get_documents(session_id)
+    docs = _document_store.get(session_id, [])
     assert len(docs) == 2
 
 

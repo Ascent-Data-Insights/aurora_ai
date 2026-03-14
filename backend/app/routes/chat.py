@@ -1,16 +1,19 @@
 import json
 import logging
 
-from fastapi import APIRouter, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db import get_db
 from app.models.chat import ChatRequest, ChatResponse, DocumentInfo, MessageEntry, SessionResponse, SessionSummary
 from app.models.graph import SessionState
 from app.services.chat_agent import build_chat_agent
 from app.services.document_parser import SUPPORTED_EXTENSIONS, parse_document
 from app.services.extractor_agent import extractor_agent
 from app.services.phase import get_phase_guidance
-from app.services.sessions import UploadedDocument, session_store
+from app.services import sessions
+from app.services.sessions import UploadedDocument, _document_store
 
 logger = logging.getLogger(__name__)
 
@@ -18,16 +21,16 @@ router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 
 @router.get("/sessions", response_model=list[SessionSummary])
-async def list_sessions() -> list[SessionSummary]:
+async def list_sessions(db: AsyncSession = Depends(get_db)) -> list[SessionSummary]:
     return [
         SessionSummary(session_id=sid, created_at=created_at)
-        for sid, created_at in session_store.list_all()
+        for sid, created_at in await sessions.list_all(db)
     ]
 
 
 @router.post("/sessions", response_model=SessionResponse)
-async def create_session() -> SessionResponse:
-    session_id = session_store.create()
+async def create_session(db: AsyncSession = Depends(get_db)) -> SessionResponse:
+    session_id = await sessions.create(db)
     return SessionResponse(session_id=session_id)
 
 
@@ -35,9 +38,10 @@ async def create_session() -> SessionResponse:
 async def upload_documents(
     session_id: str,
     files: list[UploadFile],
+    db: AsyncSession = Depends(get_db),
 ) -> list[DocumentInfo]:
     """Upload Word, PowerPoint, or Excel files to a session."""
-    if session_store.get(session_id) is None:
+    if await sessions.get(db, session_id) is None:
         raise HTTPException(status_code=404, detail="Session not found")
 
     results: list[DocumentInfo] = []
@@ -47,7 +51,7 @@ async def upload_documents(
         try:
             text = parse_document(filename, content)
             doc = UploadedDocument(filename=filename, text=text)
-            session_store.add_document(session_id, doc)
+            _document_store.setdefault(session_id, []).append(doc)
             results.append(DocumentInfo(filename=filename, size=len(content), ok=True))
         except ValueError as e:
             results.append(DocumentInfo(filename=filename, size=len(content), ok=False, error=str(e)))
@@ -57,7 +61,7 @@ async def upload_documents(
 
 def _build_document_context(session_id: str) -> str:
     """Build a context string from all uploaded documents in a session."""
-    docs = session_store.get_documents(session_id)
+    docs = _document_store.get(session_id, [])
     if not docs:
         return ""
 
@@ -72,15 +76,15 @@ def _build_document_context(session_id: str) -> str:
 
 
 @router.post("", response_model=ChatResponse)
-async def chat(request: ChatRequest) -> ChatResponse:
-    session_id = request.session_id or session_store.create()
+async def chat(request: ChatRequest, db: AsyncSession = Depends(get_db)) -> ChatResponse:
+    session_id = request.session_id or await sessions.create(db)
 
-    message_history = session_store.get(session_id)
+    message_history = await sessions.get(db, session_id)
     if message_history is None:
         raise HTTPException(status_code=404, detail="Session not found")
 
     # Build phase-aware chat agent
-    state = session_store.get_state(session_id) or SessionState()
+    state = await sessions.get_state(db, session_id) or SessionState()
     _phase, guidance = get_phase_guidance(state)
     doc_context = _build_document_context(session_id)
     agent = build_chat_agent(guidance, document_context=doc_context)
@@ -90,16 +94,16 @@ async def chat(request: ChatRequest) -> ChatResponse:
         message_history=message_history,
         model_settings={"anthropic_cache_instructions": True},
     )
-    session_store.set(session_id, result.all_messages())
+    await sessions.set(db, session_id, result.all_messages())
 
     return ChatResponse(message=result.output, session_id=session_id)
 
 
 @router.post("/stream")
-async def chat_stream(request: ChatRequest) -> StreamingResponse:
-    session_id = request.session_id or session_store.create()
+async def chat_stream(request: ChatRequest, db: AsyncSession = Depends(get_db)) -> StreamingResponse:
+    session_id = request.session_id or await sessions.create(db)
 
-    message_history = session_store.get(session_id)
+    message_history = await sessions.get(db, session_id)
     if message_history is None:
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -107,7 +111,7 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
         yield f"data: {json.dumps({'type': 'session', 'session_id': session_id})}\n\n"
 
         # Build phase-aware chat agent
-        state = session_store.get_state(session_id) or SessionState()
+        state = await sessions.get_state(db, session_id) or SessionState()
         phase, guidance = get_phase_guidance(state)
         doc_context = _build_document_context(session_id)
         agent = build_chat_agent(guidance, document_context=doc_context)
@@ -125,7 +129,7 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
                 assistant_response += chunk
                 yield f"data: {json.dumps({'type': 'delta', 'content': chunk})}\n\n"
 
-            session_store.set(session_id, stream.all_messages())
+            await sessions.set(db, session_id, stream.all_messages())
 
         # Run extractor agent after chat completes
         try:
@@ -143,7 +147,7 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
                 model_settings={"anthropic_cache_instructions": True},
             )
             new_state = result.output
-            session_store.set_state(session_id, new_state)
+            await sessions.set_state(db, session_id, new_state)
 
             # Emit scores for the frontend (same shape as before)
             yield f"data: {json.dumps({'type': 'scores', **new_state.scores.model_dump()})}\n\n"
@@ -167,8 +171,8 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
 
 
 @router.get("/sessions/{session_id}/messages", response_model=list[MessageEntry])
-async def get_messages(session_id: str) -> list[MessageEntry]:
-    message_history = session_store.get(session_id)
+async def get_messages(session_id: str, db: AsyncSession = Depends(get_db)) -> list[MessageEntry]:
+    message_history = await sessions.get(db, session_id)
     if message_history is None:
         raise HTTPException(status_code=404, detail="Session not found")
 

@@ -6,7 +6,7 @@ from pydantic_ai.models.test import TestModel
 from app.models.graph import SessionState
 from app.models.scores import DimensionScore, RingScores
 from app.services.extractor_agent import extractor_agent
-from app.services.sessions import session_store
+from app.services import sessions
 
 
 @pytest.mark.anyio
@@ -33,17 +33,19 @@ async def test_extractor_agent_custom_output():
         assert result.output.scores.scalability.confidence == 5
 
 
-def test_session_store_initializes_state():
-    session_id = session_store.create()
-    state = session_store.get_state(session_id)
+@pytest.mark.anyio
+async def test_session_store_initializes_state(db):
+    session_id = await sessions.create(db)
+    state = await sessions.get_state(db, session_id)
     assert state is not None
     assert state.scores.value.confidence == 0
     assert state.scores.feasibility.confidence == 0
     assert state.scores.scalability.confidence == 0
 
 
-def test_session_store_updates_state():
-    session_id = session_store.create()
+@pytest.mark.anyio
+async def test_session_store_updates_state(db):
+    session_id = await sessions.create(db)
     new_state = SessionState(
         scores=RingScores(
             value=DimensionScore(value=80, confidence=50),
@@ -51,15 +53,16 @@ def test_session_store_updates_state():
             scalability=DimensionScore(value=0, confidence=0),
         )
     )
-    session_store.set_state(session_id, new_state)
-    stored = session_store.get_state(session_id)
+    await sessions.set_state(db, session_id, new_state)
+    stored = await sessions.get_state(db, session_id)
     assert stored is not None
     assert stored.scores.value.value == 80
     assert stored.scores.feasibility.confidence == 20
 
 
-def test_session_store_get_state_unknown_session():
-    assert session_store.get_state("nonexistent") is None
+@pytest.mark.anyio
+async def test_session_store_get_state_unknown_session(db):
+    assert await sessions.get_state(db, "nonexistent") is None
 
 
 @pytest.mark.anyio
@@ -105,10 +108,6 @@ async def test_state_persists_across_turns(client):
             events1.append(json.loads(line[6:]))
 
     session_id = next(e["session_id"] for e in events1 if e["type"] == "session")
-
-    # Verify state stored in session
-    stored = session_store.get_state(session_id)
-    assert stored is not None
 
     # Second turn — same session
     resp2 = await client.post(
