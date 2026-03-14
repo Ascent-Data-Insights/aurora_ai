@@ -2,9 +2,10 @@ import asyncio
 import json
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+from app.rate_limit import limiter
 from app.models.chat import ChatRequest, ChatResponse, MessageEntry, SessionResponse, SessionSummary
 from app.models.graph import SessionState
 from app.services.flow_graph import run_flow, run_flow_streaming
@@ -24,7 +25,8 @@ async def list_sessions() -> list[SessionSummary]:
 
 
 @router.post("/sessions", response_model=SessionResponse)
-async def create_session() -> SessionResponse:
+@limiter.limit("5/minute")
+async def create_session(request: Request) -> SessionResponse:
     session_id = session_store.create()
 
     # Generate agent-initiated first message
@@ -37,15 +39,16 @@ async def create_session() -> SessionResponse:
 
 
 @router.post("", response_model=ChatResponse)
-async def chat(request: ChatRequest) -> ChatResponse:
-    session_id = request.session_id or session_store.create()
+@limiter.limit("20/minute")
+async def chat(request: Request, body: ChatRequest) -> ChatResponse:
+    session_id = body.session_id or session_store.create()
 
     message_history = session_store.get(session_id)
     if message_history is None:
         raise HTTPException(status_code=404, detail="Session not found")
 
     state = session_store.get_state(session_id) or SessionState()
-    result = await run_flow(state, messages=message_history, user_message=request.message)
+    result = await run_flow(state, messages=message_history, user_message=body.message)
 
     session_store.set(session_id, result["messages"])
     session_store.set_state(session_id, result["session_state"])
@@ -54,8 +57,9 @@ async def chat(request: ChatRequest) -> ChatResponse:
 
 
 @router.post("/stream")
-async def chat_stream(request: ChatRequest) -> StreamingResponse:
-    session_id = request.session_id or session_store.create()
+@limiter.limit("20/minute")
+async def chat_stream(request: Request, body: ChatRequest) -> StreamingResponse:
+    session_id = body.session_id or session_store.create()
 
     message_history = session_store.get(session_id)
     if message_history is None:
@@ -68,7 +72,7 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
         queue: asyncio.Queue = asyncio.Queue()
 
         task = asyncio.create_task(
-            run_flow_streaming(state, message_history, request.message, queue)
+            run_flow_streaming(state, message_history, body.message, queue)
         )
 
         # Drain events from the graph and yield as SSE

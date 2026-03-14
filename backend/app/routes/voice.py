@@ -3,6 +3,8 @@
 import asyncio
 import json
 import logging
+import time
+from collections import defaultdict
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -15,15 +17,35 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/voice", tags=["voice"])
 
+# Simple per-IP rate limiter for WebSocket messages
+_ws_timestamps: dict[str, list[float]] = defaultdict(list)
+_WS_RATE_LIMIT = 20  # max messages per minute
+
+
+def _ws_rate_limited(ip: str) -> bool:
+    now = time.monotonic()
+    timestamps = _ws_timestamps[ip]
+    # Prune old entries
+    _ws_timestamps[ip] = [t for t in timestamps if now - t < 60]
+    if len(_ws_timestamps[ip]) >= _WS_RATE_LIMIT:
+        return True
+    _ws_timestamps[ip].append(now)
+    return False
+
 
 @router.websocket("/ws")
 async def voice_chat(ws: WebSocket):
     await ws.accept()
+    client_ip = ws.client.host if ws.client else "unknown"
 
     try:
         while True:
             # Receive a JSON message with session_id and user text
             raw = await ws.receive_text()
+
+            if _ws_rate_limited(client_ip):
+                await ws.send_text(json.dumps({"type": "error", "message": "Rate limit exceeded"}))
+                continue
             try:
                 data = json.loads(raw)
             except (json.JSONDecodeError, TypeError):
