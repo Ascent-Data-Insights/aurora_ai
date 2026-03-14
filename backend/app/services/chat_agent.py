@@ -26,9 +26,12 @@ asked about yet, acknowledge it and build on it.
 """
 
 
-def build_chat_agent(phase_guidance: str) -> Agent:
+def build_chat_agent(phase_guidance: str, document_context: str = "") -> Agent:
     """Build a chat agent with phase-aware system prompt."""
+    system_prompt = BASE_SYSTEM_PROMPT.format(phase_guidance=phase_guidance)
+    if document_context:
+        system_prompt += f"\n\n## Uploaded documents\n{document_context}"
     return Agent(
         chat_model,
-        system_prompt=BASE_SYSTEM_PROMPT.format(phase_guidance=phase_guidance),
+        system_prompt=system_prompt,
     )

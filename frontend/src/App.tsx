@@ -9,7 +9,7 @@ import logo from '@/assets/logo.png'
 const DEBUG = import.meta.env.VITE_DEBUG === 'true'
 
 export default function App() {
-  const { messages, input, setInput, isLoading, error, scores, debug, sendMessage, setScores, setDebug, addAssistantMessage } = useChat()
+  const { messages, input, setInput, isLoading, error, scores, debug, sendMessage, setScores, setDebug, addAssistantMessage, attachedFiles, addFiles, removeFile } = useChat()
   const [voiceEnabled, setVoiceEnabled] = useState(false)
 
   const { isPlaying, sendVoiceMessage, stopPlayback } = useVoiceChat(
@@ -67,6 +67,9 @@ export default function App() {
           onToggleVoice={() => setVoiceEnabled(v => !v)}
           isPlaying={isPlaying}
           onStopPlayback={stopPlayback}
+          attachedFiles={attachedFiles}
+          onAddFiles={addFiles}
+          onRemoveFile={removeFile}
         />
       </div>
 

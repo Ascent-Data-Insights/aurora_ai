@@ -25,3 +25,10 @@ class SessionSummary(BaseModel):
 class MessageEntry(BaseModel):
     role: str
     content: str
+
+
+class DocumentInfo(BaseModel):
+    filename: str
+    size: int
+    ok: bool
+    error: str | None = None

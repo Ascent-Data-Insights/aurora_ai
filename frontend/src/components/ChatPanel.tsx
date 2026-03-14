@@ -1,11 +1,13 @@
 import { useRef, useEffect, useCallback } from 'react'
-import { Send, Loader2, AlertCircle, Volume2, VolumeX, Mic, MicOff, Square } from 'lucide-react'
+import { Send, Loader2, AlertCircle, Volume2, VolumeX, Mic, MicOff, Square, Paperclip, X } from 'lucide-react'
 import { Button } from '@components/button'
-import type { Message } from '@/hooks/useChat'
+import type { Message, UploadedFile } from '@/hooks/useChat'
 import { useTypingEffect } from '@/hooks/useTypingEffect'
 import { useSpeechToText } from '@/hooks/useSpeechToText'
 import Markdown from 'react-markdown'
 import clsx from 'clsx'
+
+const ACCEPT = '.docx,.pptx,.xlsx'
 
 interface ChatPanelProps {
   messages: Message[]
@@ -18,6 +20,9 @@ interface ChatPanelProps {
   onToggleVoice: () => void
   isPlaying: boolean
   onStopPlayback: () => void
+  attachedFiles: UploadedFile[]
+  onAddFiles: (files: FileList | File[]) => void
+  onRemoveFile: (index: number) => void
 }
 
 function MessageBubble({ message, isStreaming }: { message: Message; isStreaming?: boolean }) {
@@ -71,9 +76,13 @@ export default function ChatPanel({
   onToggleVoice,
   isPlaying,
   onStopPlayback,
+  attachedFiles,
+  onAddFiles,
+  onRemoveFile,
 }: ChatPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // STT state for tracking insertion position
   const anchorRef = useRef(0)
@@ -237,6 +246,48 @@ export default function ChatPanel({
 
       {/* Input area */}
       <div className="border-t border-zinc-200 p-4">
+        {/* Attached file chips */}
+        {attachedFiles.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-2">
+            {attachedFiles.map((f, i) => (
+              <span
+                key={i}
+                className={clsx(
+                  'inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium',
+                  f.status === 'error'
+                    ? 'bg-red-100 text-red-700'
+                    : f.status === 'uploading'
+                      ? 'bg-amber-100 text-amber-700'
+                      : 'bg-zinc-100 text-zinc-700'
+                )}
+              >
+                <Paperclip className="size-3" />
+                {f.file.name}
+                {f.status === 'uploading' && <Loader2 className="size-3 animate-spin" />}
+                <button
+                  onClick={() => onRemoveFile(i)}
+                  className="ml-1 rounded-full p-0.5 hover:bg-zinc-200"
+                >
+                  <X className="size-3" />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* Hidden file input */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept={ACCEPT}
+          multiple
+          className="hidden"
+          onChange={e => {
+            if (e.target.files) onAddFiles(e.target.files)
+            e.target.value = ''
+          }}
+        />
+
         <div className="flex items-end gap-3">
           <textarea
             ref={textareaRef}
@@ -261,6 +312,15 @@ export default function ChatPanel({
               target.style.height = Math.min(target.scrollHeight, 128) + 'px'
             }}
           />
+
+          {/* Attach files */}
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="shrink-0 rounded-lg bg-zinc-100 p-3 text-zinc-400 transition-colors hover:text-zinc-600"
+            title="Attach documents (.docx, .pptx, .xlsx)"
+          >
+            <Paperclip className="size-4" />
+          </button>
 
           {/* Mic button — STT toggle */}
           <button
@@ -327,7 +387,7 @@ export default function ChatPanel({
             <Button
               color="dark"
               onClick={() => onSubmit()}
-              disabled={!input.trim() || isLoading}
+              disabled={(!input.trim() && attachedFiles.length === 0) || isLoading}
               className="shrink-0"
             >
               <Send className="size-4" data-slot="icon" />

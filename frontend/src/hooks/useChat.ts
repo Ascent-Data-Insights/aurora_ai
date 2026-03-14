@@ -23,7 +23,15 @@ const INITIAL_SCORES: Scores = {
   scalability: { value: 0, confidence: 0 },
 }
 
+export interface UploadedFile {
+  file: File
+  status: 'pending' | 'uploading' | 'done' | 'error'
+  error?: string
+}
+
 const API_BASE = 'http://localhost:8000'
+
+const ACCEPTED_EXTENSIONS = ['.docx', '.pptx', '.xlsx']
 
 export interface DebugInfo {
   phase: string
@@ -38,22 +46,105 @@ export function useChat() {
   const [error, setError] = useState<string | null>(null)
   const [scores, setScores] = useState<Scores>(INITIAL_SCORES)
   const [debug, setDebug] = useState<DebugInfo | null>(null)
+  const [attachedFiles, setAttachedFiles] = useState<UploadedFile[]>([])
   const sessionIdRef = useRef<string | null>(null)
+
+  const addFiles = useCallback((files: FileList | File[]) => {
+    const newFiles: UploadedFile[] = []
+    for (const file of Array.from(files)) {
+      const ext = '.' + file.name.split('.').pop()?.toLowerCase()
+      if (ACCEPTED_EXTENSIONS.includes(ext)) {
+        newFiles.push({ file, status: 'pending' })
+      }
+    }
+    setAttachedFiles(prev => [...prev, ...newFiles])
+  }, [])
+
+  const removeFile = useCallback((index: number) => {
+    setAttachedFiles(prev => prev.filter((_, i) => i !== index))
+  }, [])
+
+  const uploadFiles = useCallback(async (sessionId: string): Promise<boolean> => {
+    const pending = attachedFiles.filter(f => f.status === 'pending')
+    if (pending.length === 0) return true
+
+    setAttachedFiles(prev => prev.map(f => f.status === 'pending' ? { ...f, status: 'uploading' as const } : f))
+
+    const formData = new FormData()
+    for (const f of pending) {
+      formData.append('files', f.file)
+    }
+
+    try {
+      const res = await fetch(`${API_BASE}/api/chat/upload?session_id=${encodeURIComponent(sessionId)}`, {
+        method: 'POST',
+        body: formData,
+      })
+      if (!res.ok) throw new Error(`Upload failed: ${res.status}`)
+
+      const results: Array<{ filename: string; ok: boolean; error?: string }> = await res.json()
+      setAttachedFiles(prev =>
+        prev.map(f => {
+          const result = results.find(r => r.filename === f.file.name)
+          if (!result) return f
+          return result.ok
+            ? { ...f, status: 'done' as const }
+            : { ...f, status: 'error' as const, error: result.error }
+        })
+      )
+      return results.every(r => r.ok)
+    } catch (err) {
+      setAttachedFiles(prev =>
+        prev.map(f => f.status === 'uploading' ? { ...f, status: 'error' as const, error: 'Upload failed' } : f)
+      )
+      return false
+    }
+  }, [attachedFiles])
 
   const sendMessage = useCallback(async (content?: string) => {
     const text = (content ?? input).trim()
-    if (!text || isLoading) return
+    if ((!text && attachedFiles.length === 0) || isLoading) return
 
     setError(null)
     setInput('')
 
+    // Ensure we have a session for file uploads
+    if (!sessionIdRef.current) {
+      try {
+        const res = await fetch(`${API_BASE}/api/chat/sessions`, { method: 'POST' })
+        const data = await res.json()
+        sessionIdRef.current = data.session_id
+      } catch {
+        setError('Failed to create session')
+        return
+      }
+    }
+
+    // Upload any pending files before sending the message
+    const hasPending = attachedFiles.some(f => f.status === 'pending')
+    if (hasPending) {
+      const ok = await uploadFiles(sessionIdRef.current!)
+      if (!ok) {
+        setError('Some files failed to upload')
+        return
+      }
+    }
+
+    const fileNames = attachedFiles.filter(f => f.status === 'done' || f.status === 'pending').map(f => f.file.name)
+    const displayContent = fileNames.length > 0
+      ? `${text}\n\n📎 ${fileNames.join(', ')}`
+      : text
+
+    const messageToSend = text || `Please analyze the uploaded document${attachedFiles.length > 1 ? 's' : ''}.`
+
     const userMessage: Message = {
       id: crypto.randomUUID(),
       role: 'user',
-      content: text,
+      content: displayContent,
     }
     setMessages(prev => [...prev, userMessage])
     setIsLoading(true)
+    setAttachedFiles([])
 
     const assistantId = crypto.randomUUID()
 
@@ -62,7 +153,7 @@ export function useChat() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message: text,
+          message: messageToSend,
           session_id: sessionIdRef.current,
         }),
       })
@@ -162,8 +253,9 @@ export function useChat() {
     setError(null)
     setScores(INITIAL_SCORES)
     setDebug(null)
+    setAttachedFiles([])
     sessionIdRef.current = null
   }, [])
 
-  return { messages, input, setInput, isLoading, error, scores, debug, sendMessage, resetChat, setScores, setDebug, addAssistantMessage }
+  return { messages, input, setInput, isLoading, error, scores, debug, sendMessage, resetChat, setScores, setDebug, addAssistantMessage, attachedFiles, addFiles, removeFile }
 }

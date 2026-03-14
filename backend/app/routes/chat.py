@@ -1,15 +1,16 @@
 import json
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
-from app.models.chat import ChatRequest, ChatResponse, MessageEntry, SessionResponse, SessionSummary
+from app.models.chat import ChatRequest, ChatResponse, DocumentInfo, MessageEntry, SessionResponse, SessionSummary
 from app.models.graph import SessionState
 from app.services.chat_agent import build_chat_agent
+from app.services.document_parser import SUPPORTED_EXTENSIONS, parse_document
 from app.services.extractor_agent import extractor_agent
 from app.services.phase import get_phase_guidance
-from app.services.sessions import session_store
+from app.services.sessions import UploadedDocument, session_store
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,46 @@ async def create_session() -> SessionResponse:
     return SessionResponse(session_id=session_id)
 
 
+@router.post("/upload", response_model=list[DocumentInfo])
+async def upload_documents(
+    session_id: str,
+    files: list[UploadFile],
+) -> list[DocumentInfo]:
+    """Upload Word, PowerPoint, or Excel files to a session."""
+    if session_store.get(session_id) is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    results: list[DocumentInfo] = []
+    for file in files:
+        content = await file.read()
+        filename = file.filename or "unknown"
+        try:
+            text = parse_document(filename, content)
+            doc = UploadedDocument(filename=filename, text=text)
+            session_store.add_document(session_id, doc)
+            results.append(DocumentInfo(filename=filename, size=len(content), ok=True))
+        except ValueError as e:
+            results.append(DocumentInfo(filename=filename, size=len(content), ok=False, error=str(e)))
+
+    return results
+
+
+def _build_document_context(session_id: str) -> str:
+    """Build a context string from all uploaded documents in a session."""
+    docs = session_store.get_documents(session_id)
+    if not docs:
+        return ""
+
+    parts = []
+    for doc in docs:
+        parts.append(f"--- Document: {doc.filename} ---\n{doc.text}")
+    return (
+        "The user has uploaded the following documents for context. "
+        "Use this information to inform your responses.\n\n"
+        + "\n\n".join(parts)
+    )
+
+
 @router.post("", response_model=ChatResponse)
 async def chat(request: ChatRequest) -> ChatResponse:
     session_id = request.session_id or session_store.create()
@@ -41,7 +82,8 @@ async def chat(request: ChatRequest) -> ChatResponse:
     # Build phase-aware chat agent
     state = session_store.get_state(session_id) or SessionState()
     _phase, guidance = get_phase_guidance(state)
-    agent = build_chat_agent(guidance)
+    doc_context = _build_document_context(session_id)
+    agent = build_chat_agent(guidance, document_context=doc_context)
 
     result = await agent.run(
         request.message,
@@ -67,7 +109,8 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
         # Build phase-aware chat agent
         state = session_store.get_state(session_id) or SessionState()
         phase, guidance = get_phase_guidance(state)
-        agent = build_chat_agent(guidance)
+        doc_context = _build_document_context(session_id)
+        agent = build_chat_agent(guidance, document_context=doc_context)
 
         # Emit debug info: phase + state before this turn
         yield f"data: {json.dumps({'type': 'debug', 'phase': phase.value, 'guidance': guidance, 'state': state.model_dump()})}\n\n"
