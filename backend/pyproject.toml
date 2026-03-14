@@ -10,6 +10,7 @@ dependencies = [
     "python-dotenv>=1.0",
     "sse-starlette>=2.2",
     "cartesia[websockets]>=3.0.2",
+    "langgraph>=0.2",
 ]
 
 [project.optional-dependencies]

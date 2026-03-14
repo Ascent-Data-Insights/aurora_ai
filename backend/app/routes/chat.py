@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 
@@ -6,9 +7,7 @@ from fastapi.responses import StreamingResponse
 
 from app.models.chat import ChatRequest, ChatResponse, MessageEntry, SessionResponse, SessionSummary
 from app.models.graph import SessionState
-from app.services.chat_agent import build_chat_agent
-from app.services.extractor_agent import extractor_agent
-from app.services.phase import get_phase_guidance
+from app.services.flow_graph import run_flow, run_flow_streaming
 from app.services.sessions import session_store
 
 logger = logging.getLogger(__name__)
@@ -27,7 +26,14 @@ async def list_sessions() -> list[SessionSummary]:
 @router.post("/sessions", response_model=SessionResponse)
 async def create_session() -> SessionResponse:
     session_id = session_store.create()
-    return SessionResponse(session_id=session_id)
+
+    # Generate agent-initiated first message
+    state = session_store.get_state(session_id) or SessionState()
+    result = await run_flow(state, messages=[], user_message="")
+    session_store.set(session_id, result["messages"])
+    session_store.set_state(session_id, result["session_state"])
+
+    return SessionResponse(session_id=session_id, first_message=result["assistant_response"])
 
 
 @router.post("", response_model=ChatResponse)
@@ -38,19 +44,13 @@ async def chat(request: ChatRequest) -> ChatResponse:
     if message_history is None:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    # Build phase-aware chat agent
     state = session_store.get_state(session_id) or SessionState()
-    _phase, guidance = get_phase_guidance(state)
-    agent = build_chat_agent(guidance)
+    result = await run_flow(state, messages=message_history, user_message=request.message)
 
-    result = await agent.run(
-        request.message,
-        message_history=message_history,
-        model_settings={"anthropic_cache_instructions": True},
-    )
-    session_store.set(session_id, result.all_messages())
+    session_store.set(session_id, result["messages"])
+    session_store.set_state(session_id, result["session_state"])
 
-    return ChatResponse(message=result.output, session_id=session_id)
+    return ChatResponse(message=result["assistant_response"], session_id=session_id)
 
 
 @router.post("/stream")
@@ -64,51 +64,23 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
     async def event_generator():
         yield f"data: {json.dumps({'type': 'session', 'session_id': session_id})}\n\n"
 
-        # Build phase-aware chat agent
         state = session_store.get_state(session_id) or SessionState()
-        phase, guidance = get_phase_guidance(state)
-        agent = build_chat_agent(guidance)
+        queue: asyncio.Queue = asyncio.Queue()
 
-        # Emit debug info: phase + state before this turn
-        yield f"data: {json.dumps({'type': 'debug', 'phase': phase.value, 'guidance': guidance, 'state': state.model_dump()})}\n\n"
+        task = asyncio.create_task(
+            run_flow_streaming(state, message_history, request.message, queue)
+        )
 
-        assistant_response = ""
-        async with agent.run_stream(
-            request.message,
-            message_history=message_history,
-            model_settings={"anthropic_cache_instructions": True},
-        ) as stream:
-            async for chunk in stream.stream_text(delta=True):
-                assistant_response += chunk
-                yield f"data: {json.dumps({'type': 'delta', 'content': chunk})}\n\n"
+        # Drain events from the graph and yield as SSE
+        while True:
+            event = await queue.get()
+            yield f"data: {json.dumps(event)}\n\n"
+            if event["type"] == "done":
+                break
 
-            session_store.set(session_id, stream.all_messages())
-
-        # Run extractor agent after chat completes
-        try:
-            extractor_input = (
-                f"Current state:\n{state.model_dump_json(indent=2)}\n\n"
-                f"Current phase: {phase.value}\n\n"
-                f"Latest user message:\n{request.message}\n\n"
-                f"Latest assistant response:\n{assistant_response}"
-            )
-            result = await extractor_agent.run(
-                extractor_input,
-                model_settings={"anthropic_cache_instructions": True},
-            )
-            new_state = result.output
-            session_store.set_state(session_id, new_state)
-
-            # Emit scores for the frontend (same shape as before)
-            yield f"data: {json.dumps({'type': 'scores', **new_state.scores.model_dump()})}\n\n"
-
-            # Emit updated debug info after extraction
-            new_phase, new_guidance = get_phase_guidance(new_state)
-            yield f"data: {json.dumps({'type': 'debug', 'phase': new_phase.value, 'guidance': new_guidance, 'state': new_state.model_dump()})}\n\n"
-        except Exception:
-            logger.exception("Extractor agent failed")
-
-        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        result = await task
+        session_store.set(session_id, result["messages"])
+        session_store.set_state(session_id, result["session_state"])
 
     return StreamingResponse(
         event_generator(),

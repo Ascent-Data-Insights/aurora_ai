@@ -31,6 +31,15 @@ export interface DebugInfo {
   state: Record<string, unknown>
 }
 
+export type FlowNodeStatus = 'idle' | 'active' | 'done'
+
+export interface FlowNodeState {
+  route: FlowNodeStatus
+  chat: FlowNodeStatus
+  extract: FlowNodeStatus
+  detect_regression: FlowNodeStatus
+}
+
 export function useChat() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
@@ -38,6 +47,10 @@ export function useChat() {
   const [error, setError] = useState<string | null>(null)
   const [scores, setScores] = useState<Scores>(INITIAL_SCORES)
   const [debug, setDebug] = useState<DebugInfo | null>(null)
+  const [flowNodes, setFlowNodes] = useState<FlowNodeState>({
+    route: 'idle', chat: 'idle', extract: 'idle', detect_regression: 'idle',
+  })
+  const [regression, setRegression] = useState<string | null>(null)
   const sessionIdRef = useRef<string | null>(null)
 
   const sendMessage = useCallback(async (content?: string) => {
@@ -46,6 +59,8 @@ export function useChat() {
 
     setError(null)
     setInput('')
+    setFlowNodes({ route: 'idle', chat: 'idle', extract: 'idle', detect_regression: 'idle' })
+    setRegression(null)
 
     const userMessage: Message = {
       id: crypto.randomUUID(),
@@ -55,7 +70,7 @@ export function useChat() {
     setMessages(prev => [...prev, userMessage])
     setIsLoading(true)
 
-    const assistantId = crypto.randomUUID()
+    let currentAssistantId = crypto.randomUUID()
 
     try {
       const res = await fetch(`${API_BASE}/api/chat/stream`, {
@@ -80,7 +95,7 @@ export function useChat() {
       // Add empty assistant message that we'll stream into
       setMessages(prev => [
         ...prev,
-        { id: assistantId, role: 'assistant', content: '' },
+        { id: currentAssistantId, role: 'assistant', content: '' },
       ])
 
       while (true) {
@@ -101,10 +116,17 @@ export function useChat() {
 
             if (event.type === 'session') {
               sessionIdRef.current = event.session_id
+            } else if (event.type === 'message_start') {
+              // Regression loop-back: the graph is running chat again
+              currentAssistantId = crypto.randomUUID()
+              setMessages(prev => [
+                ...prev,
+                { id: currentAssistantId, role: 'assistant', content: '' },
+              ])
             } else if (event.type === 'delta') {
               setMessages(prev =>
                 prev.map(m =>
-                  m.id === assistantId
+                  m.id === currentAssistantId
                     ? { ...m, content: m.content + event.content }
                     : m
                 )
@@ -115,6 +137,10 @@ export function useChat() {
                 feasibility: event.feasibility,
                 scalability: event.scalability,
               })
+            } else if (event.type === 'flow_node') {
+              setFlowNodes(prev => ({ ...prev, [event.node]: event.status }))
+            } else if (event.type === 'regression') {
+              setRegression(event.ring)
             } else if (event.type === 'debug') {
               setDebug({
                 phase: event.phase,
@@ -134,7 +160,7 @@ export function useChat() {
       // Remove empty assistant message if we errored before any content
       setMessages(prev => {
         const last = prev[prev.length - 1]
-        if (last?.id === assistantId && !last.content) {
+        if (last?.id === currentAssistantId && !last.content) {
           return prev.slice(0, -1)
         }
         return prev
@@ -165,5 +191,5 @@ export function useChat() {
     sessionIdRef.current = null
   }, [])
 
-  return { messages, input, setInput, isLoading, error, scores, debug, sendMessage, resetChat, setScores, setDebug, addAssistantMessage }
+  return { messages, input, setInput, isLoading, error, scores, debug, flowNodes, regression, sendMessage, resetChat, setScores, setDebug, addAssistantMessage }
 }

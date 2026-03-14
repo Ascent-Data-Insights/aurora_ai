@@ -15,6 +15,7 @@ class ChatResponse(BaseModel):
 
 class SessionResponse(BaseModel):
     session_id: str
+    first_message: str | None = None
 
 
 class SessionSummary(BaseModel):

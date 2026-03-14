@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import type { DebugInfo } from '@/hooks/useChat'
+import type { DebugInfo, FlowNodeState } from '@/hooks/useChat'
+import FlowGraph from './FlowGraph'
 
 const PHASE_LABELS: Record<string, string> = {
   context_gathering: 'Context Gathering',
@@ -21,17 +22,20 @@ const PHASE_COLORS: Record<string, string> = {
 
 interface DebugPanelProps {
   debug: DebugInfo | null
+  flowNodes: FlowNodeState
+  regression: string | null
 }
 
-export default function DebugPanel({ debug }: DebugPanelProps) {
+export default function DebugPanel({ debug, flowNodes, regression }: DebugPanelProps) {
   const [expanded, setExpanded] = useState(false)
 
-  if (!debug) return null
+  const hasActivity = debug || Object.values(flowNodes).some(s => s !== 'idle')
+  if (!hasActivity) return null
 
-  const phaseLabel = PHASE_LABELS[debug.phase] ?? debug.phase
-  const phaseColor = PHASE_COLORS[debug.phase] ?? 'bg-zinc-100 text-zinc-800'
+  const phaseLabel = debug ? (PHASE_LABELS[debug.phase] ?? debug.phase) : '—'
+  const phaseColor = debug ? (PHASE_COLORS[debug.phase] ?? 'bg-zinc-100 text-zinc-800') : 'bg-zinc-100 text-zinc-800'
 
-  const state = debug.state as Record<string, Record<string, unknown>>
+  const state = (debug?.state ?? {}) as Record<string, Record<string, unknown>>
 
   return (
     <div className="border-t border-zinc-200 bg-zinc-50 text-xs font-mono">
@@ -48,15 +52,25 @@ export default function DebugPanel({ debug }: DebugPanelProps) {
       </button>
 
       {expanded && (
-        <div className="border-t border-zinc-200 px-4 py-3 space-y-3 max-h-80 overflow-y-auto">
-          <Section title="Guidance" value={debug.guidance} />
-          <StateSection title="Organization" data={state.organization} />
-          <StateSection title="User" data={state.user} />
-          <StateSection title="Initiative" data={state.initiative} />
-          <StateSection title="Value Assessment" data={state.value_assessment} />
-          <StateSection title="Feasibility Assessment" data={state.feasibility_assessment} />
-          <StateSection title="Scalability Assessment" data={state.scalability_assessment} />
-          <ScoresSection scores={state.scores} />
+        <div className="border-t border-zinc-200 py-3 space-y-3 max-h-96 overflow-y-auto">
+          {/* Flow graph visualization */}
+          <div className="px-4">
+            <div className="text-zinc-400 mb-1">Flow Graph</div>
+            <FlowGraph flowNodes={flowNodes} regression={regression} />
+          </div>
+
+          {debug && (
+            <div className="px-4 space-y-3">
+              <Section title="Guidance" value={debug.guidance} />
+              <StateSection title="Organization" data={state.organization} />
+              <StateSection title="User" data={state.user} />
+              <StateSection title="Initiative" data={state.initiative} />
+              <StateSection title="Value Assessment" data={state.value_assessment} />
+              <StateSection title="Feasibility Assessment" data={state.feasibility_assessment} />
+              <StateSection title="Scalability Assessment" data={state.scalability_assessment} />
+              <ScoresSection scores={state.scores} />
+            </div>
+          )}
         </div>
       )}
     </div>

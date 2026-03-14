@@ -7,9 +7,7 @@ import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.models.graph import SessionState
-from app.services.chat_agent import build_chat_agent
-from app.services.extractor_agent import extractor_agent
-from app.services.phase import get_phase_guidance
+from app.services.flow_graph import run_flow_streaming
 from app.services.sessions import session_store
 from app.services.tts import stream_tts
 
@@ -40,81 +38,59 @@ async def voice_chat(ws: WebSocket):
             # Send session info
             await ws.send_text(json.dumps({"type": "session", "session_id": session_id}))
 
-            # Build phase-aware agent
             state = session_store.get_state(session_id) or SessionState()
-            phase, guidance = get_phase_guidance(state)
-            agent = build_chat_agent(guidance)
-
-            # Queue for piping Claude text chunks to TTS
+            queue: asyncio.Queue = asyncio.Queue()
             text_queue: asyncio.Queue[str | None] = asyncio.Queue()
 
-            async def text_chunk_iter():
-                """Async iterator that drains the text queue."""
+            flow_task = asyncio.create_task(
+                run_flow_streaming(state, message_history, message, queue)
+            )
+
+            async def consume_events():
+                """Drain events from the flow graph, forwarding to WS and TTS."""
                 while True:
-                    chunk = await text_queue.get()
-                    if chunk is None:
-                        return
-                    yield chunk
+                    event = await queue.get()
+                    evt_type = event["type"]
 
-            async def run_llm():
-                """Stream Claude's response and push text chunks to the queue."""
-                assistant_response = ""
-                try:
-                    async with agent.run_stream(
-                        message,
-                        message_history=message_history,
-                        model_settings={"anthropic_cache_instructions": True},
-                    ) as stream:
-                        async for chunk in stream.stream_text(delta=True):
-                            assistant_response += chunk
-                            await text_queue.put(chunk)
+                    # Fork text deltas to the TTS queue
+                    if evt_type == "delta":
+                        await text_queue.put(event["content"])
 
-                        session_store.set(session_id, stream.all_messages())
-                finally:
-                    await text_queue.put(None)  # Signal end of text
+                    # Forward relevant events to the WebSocket client
+                    if evt_type in ("scores", "regression", "debug", "flow_node"):
+                        await ws.send_text(json.dumps(event))
 
-                return assistant_response
+                    if evt_type == "done":
+                        await text_queue.put(None)  # Signal TTS end
+                        break
 
             async def run_tts():
                 """Stream TTS audio chunks back to the client."""
+                async def text_chunk_iter():
+                    while True:
+                        chunk = await text_queue.get()
+                        if chunk is None:
+                            return
+                        yield chunk
+
                 async for audio_chunk in stream_tts(text_chunk_iter()):
                     await ws.send_bytes(audio_chunk)
 
-            # Run LLM and TTS concurrently
-            llm_task = asyncio.create_task(run_llm())
+            consume_task = asyncio.create_task(consume_events())
             tts_task = asyncio.create_task(run_tts())
 
-            assistant_response = await llm_task
+            result = await flow_task
+            await consume_task
             await tts_task
 
-            # Send text response too (for display)
+            session_store.set(session_id, result["messages"])
+            session_store.set_state(session_id, result["session_state"])
+
+            # Send transcript and done
             await ws.send_text(json.dumps({
                 "type": "transcript",
-                "content": assistant_response,
+                "content": result["assistant_response"],
             }))
-
-            # Run extractor (non-blocking for audio, but we await for state update)
-            try:
-                extractor_input = (
-                    f"Current state:\n{state.model_dump_json(indent=2)}\n\n"
-                    f"Current phase: {phase.value}\n\n"
-                    f"Latest user message:\n{message}\n\n"
-                    f"Latest assistant response:\n{assistant_response}"
-                )
-                result = await extractor_agent.run(
-                    extractor_input,
-                    model_settings={"anthropic_cache_instructions": True},
-                )
-                new_state = result.output
-                session_store.set_state(session_id, new_state)
-
-                await ws.send_text(json.dumps({
-                    "type": "scores",
-                    **new_state.scores.model_dump(),
-                }))
-            except Exception:
-                logger.exception("Extractor agent failed")
-
             await ws.send_text(json.dumps({"type": "done"}))
 
     except WebSocketDisconnect:

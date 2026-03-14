@@ -13,9 +13,11 @@ from app.services.sessions import session_store
 def _clear_sessions():
     session_store._sessions.clear()
     session_store._state.clear()
+    session_store._created_at.clear()
     yield
     session_store._sessions.clear()
     session_store._state.clear()
+    session_store._created_at.clear()
 
 
 @pytest.fixture(autouse=True)
