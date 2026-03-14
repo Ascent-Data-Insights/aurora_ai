@@ -10,6 +10,9 @@ dependencies = [
     "python-dotenv>=1.0",
     "sse-starlette>=2.2",
     "cartesia[websockets]>=3.0.2",
+    "sqlmodel>=0.0.22",
+    "asyncpg>=0.30",
+    "alembic>=1.15",
 ]
 
 [project.optional-dependencies]
@@ -17,4 +20,7 @@ dev = [
     "ruff>=0.9",
     "pytest>=8.0",
     "httpx>=0.28",
+    "anyio>=4.0",
+    "pytest-anyio>=0.0.0",
+    "aiosqlite>=0.20",
 ]
