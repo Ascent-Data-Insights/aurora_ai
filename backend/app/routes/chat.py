@@ -129,12 +129,15 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
 
         # Run extractor agent after chat completes
         try:
-            extractor_input = (
-                f"Current state:\n{state.model_dump_json(indent=2)}\n\n"
-                f"Current phase: {phase.value}\n\n"
-                f"Latest user message:\n{request.message}\n\n"
-                f"Latest assistant response:\n{assistant_response}"
-            )
+            extractor_parts = [
+                f"Current state:\n{state.model_dump_json(indent=2)}",
+                f"Current phase: {phase.value}",
+            ]
+            if doc_context:
+                extractor_parts.append(f"Uploaded documents:\n{doc_context}")
+            extractor_parts.append(f"Latest user message:\n{request.message}")
+            extractor_parts.append(f"Latest assistant response:\n{assistant_response}")
+            extractor_input = "\n\n".join(extractor_parts)
             result = await extractor_agent.run(
                 extractor_input,
                 model_settings={"anthropic_cache_instructions": True},

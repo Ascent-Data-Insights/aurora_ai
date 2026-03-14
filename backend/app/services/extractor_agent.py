@@ -44,8 +44,15 @@ Scoring guidelines:
 - Confidence starts at 0 and grows as relevant information surfaces.
 - A dimension with no information should stay at 0 confidence with value 0.
 - Be conservative with confidence — 90%+ means very thorough information.
-- Small increments (5-15%) per turn are typical unless detailed info is provided.
+- In a normal conversational turn, small increments (5-15%) are typical.
+- However, when uploaded documents or the assistant response contain substantial \
+detail about a dimension (financials, timelines, technical details, growth \
+projections, etc.), confidence and value should reflect ALL of that evidence. \
+A document that thoroughly covers a dimension can justify 40-70% confidence in \
+a single turn.
 - Assessment field completeness should correlate with confidence.
+- Always score ALL three dimensions based on ALL available evidence — do not \
+focus on only one dimension per turn.
 """
 
 extractor_agent = Agent(
