@@ -261,7 +261,7 @@ export function useChat() {
     } finally {
       setIsLoading(false)
     }
-  }, [input, isLoading])
+  }, [input, isLoading, attachedFiles, uploadFiles])
 
   const addAssistantMessage = useCallback((content: string, role: 'user' | 'assistant', existingId?: string) => {
     const id = existingId ?? crypto.randomUUID()

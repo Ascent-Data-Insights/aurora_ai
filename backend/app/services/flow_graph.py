@@ -8,7 +8,7 @@ import logging
 from langgraph.graph import END, StateGraph
 from langgraph.types import RunnableConfig
 
-from pydantic_ai.messages import ModelRequest
+from pydantic_ai.messages import ModelRequest, SystemPromptPart
 
 from app.config import settings
 from app.models.flow import FlowState
@@ -98,8 +98,13 @@ async def chat_node(state: FlowState, config: RunnableConfig) -> dict:
         _phase, guidance = get_phase_guidance(session_state)
 
     document_context = state.get("document_context", "")
-    agent = build_chat_agent(guidance, document_context=document_context)
+    agent, system_prompt = build_chat_agent(guidance, document_context=document_context)
     prompt = user_message if user_message else "Begin the conversation."
+
+    # Replace old SystemPromptPart entries in history with the current
+    # system prompt — pydantic_ai does not re-inject the agent's system
+    # prompt when message_history is provided.
+    cleaned_history = _replace_system_prompt(messages, system_prompt)
 
     if _has_queue(config):
         # Streaming mode: emit text deltas
@@ -107,7 +112,7 @@ async def chat_node(state: FlowState, config: RunnableConfig) -> dict:
         assistant_response = ""
         async with agent.run_stream(
             prompt,
-            message_history=messages,
+            message_history=cleaned_history,
             model_settings={"anthropic_cache_instructions": True},
         ) as stream:
             async for chunk in stream.stream_text(delta=True):
@@ -118,7 +123,7 @@ async def chat_node(state: FlowState, config: RunnableConfig) -> dict:
         # Non-streaming mode
         result = await agent.run(
             prompt,
-            message_history=messages,
+            message_history=cleaned_history,
             model_settings={"anthropic_cache_instructions": True},
         )
         new_messages = result.all_messages()
@@ -295,6 +300,39 @@ async def run_flow_streaming(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _replace_system_prompt(messages: list, system_prompt: str) -> list:
+    """Replace SystemPromptPart entries in message history with a new one.
+
+    pydantic_ai does not re-inject the agent's system prompt when
+    message_history is provided.  This helper strips old system-prompt
+    parts and prepends the current system prompt (which may include
+    updated guidance or document context) to the first request message.
+    """
+    cleaned = []
+    for msg in messages:
+        if msg.kind == "request":
+            filtered_parts = [
+                part for part in msg.parts
+                if part.part_kind != "system-prompt"
+            ]
+            if filtered_parts:
+                cleaned.append(ModelRequest(parts=filtered_parts))
+        else:
+            cleaned.append(msg)
+
+    # Inject the current system prompt into the first request message,
+    # or prepend a new request if the history starts with a response.
+    if cleaned:
+        if cleaned[0].kind == "request":
+            cleaned[0] = ModelRequest(
+                parts=[SystemPromptPart(content=system_prompt)] + list(cleaned[0].parts)
+            )
+        else:
+            cleaned.insert(0, ModelRequest(parts=[SystemPromptPart(content=system_prompt)]))
+
+    return cleaned
+
 
 def _strip_synthetic_prompt(messages: list) -> list:
     """Remove the synthetic 'Begin the conversation.' user prompt from history."""

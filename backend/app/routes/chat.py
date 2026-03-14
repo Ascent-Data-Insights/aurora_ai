@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -45,7 +45,7 @@ async def create_session(request: Request, db: AsyncSession = Depends(get_db)) -
 @router.post("/upload", response_model=list[DocumentInfo])
 async def upload_documents(
     session_id: str,
-    files: list[UploadFile],
+    files: list[UploadFile] = File(...),
     db: AsyncSession = Depends(get_db),
 ) -> list[DocumentInfo]:
     """Upload Word, PowerPoint, or Excel files to a session."""

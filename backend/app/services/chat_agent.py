@@ -26,12 +26,23 @@ asked about yet, acknowledge it and build on it.
 """
 
 
-def build_chat_agent(phase_guidance: str, document_context: str = "") -> Agent:
-    """Build a chat agent with phase-aware system prompt."""
+def build_system_prompt(phase_guidance: str, document_context: str = "") -> str:
+    """Build the full system prompt string."""
     system_prompt = BASE_SYSTEM_PROMPT.format(phase_guidance=phase_guidance)
     if document_context:
         system_prompt += f"\n\n## Uploaded documents\n{document_context}"
-    return Agent(
+    return system_prompt
+
+
+def build_chat_agent(phase_guidance: str, document_context: str = "") -> tuple[Agent, str]:
+    """Build a chat agent with phase-aware system prompt.
+
+    Returns the agent and the system prompt string (needed to inject
+    into message history for pydantic_ai compatibility).
+    """
+    system_prompt = build_system_prompt(phase_guidance, document_context)
+    agent = Agent(
         chat_model,
         system_prompt=system_prompt,
     )
+    return agent, system_prompt
