@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef } from 'react'
 import type { Scores, DebugInfo } from './useChat'
 
-const WS_BASE = 'ws://localhost:8000'
+const WS_BASE = import.meta.env.VITE_WS_BASE ?? ''
 const SAMPLE_RATE = 24000
 
 export function useVoiceChat(

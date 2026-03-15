@@ -1,30 +1,117 @@
 # Infrastructure
 
-Azure infrastructure-as-code and deployment configuration for the Strategic Intelligence Platform.
+## Architecture
 
-## Azure Services
+- **Frontend**: Netlify (static site hosting)
+- **Backend**: Hetzner VM (`demos-server`, `178.156.214.239`)
+- **Database**: PostgreSQL on the Hetzner VM
+- **Reverse proxy / TLS**: Caddy (auto-provisions Let's Encrypt certs)
+- **DNS**: Netlify DNS (both `ascentdi.com` and `ascentdatainsights.com` zones)
 
-| Service | Purpose | Dev Tier |
+## Domains
+
+| Domain | Points to | Purpose |
 |---|---|---|
-| **Azure Static Web Apps** | Host React frontend | Free tier |
-| **Azure Container Apps** | Run FastAPI backend | ~$0–5/mo |
-| **Azure Database for PostgreSQL** | Operational data, LangGraph checkpoints, pgvector embeddings | Burstable, ~$12–15/mo |
-| **Azure Blob Storage** | Raw files, audio recordings | ~$1/mo |
-| **Azure AI Foundry** | LLM calls (Claude, GPT-4o) + Whisper transcription | Pay-per-use |
+| `aurora-api.ascentdi.com` | Hetzner VM (Caddy → port 8001) | Backend API |
+| `aurora.ascentdi.com` | Netlify (`adi-aurora-demo`) | Frontend |
 
-## Database
+## Hetzner VM Setup
 
-PostgreSQL with pgvector extension handles three workloads in a single instance:
+The backend runs as a systemd service from a git clone of this repo.
 
-1. **Operational tables** — orgs, users, sessions, initiatives, vendors, scores, etc.
-2. **LangGraph checkpoints** — durable session state so users can pause/resume strategy sessions across days or weeks.
-3. **Vector embeddings** — semantic search over documents, transcripts, and cross-module context.
+### Services on the VM
 
-Keeping everything in Postgres avoids a separate vector DB and enables joins between structured data and semantic search.
+| Service | Port | Description |
+|---|---|---|
+| `routing-demo` | 8000 | Routing demo backend (separate project) |
+| `aurora` | 8001 | This project's backend |
+| `caddy` | 80/443 | Reverse proxy with auto-TLS |
+| `postgresql` | 5432 | Database |
 
-## Key Considerations
+### Key files on the VM
 
-- **Tenant isolation** — data security is the #1 enterprise sales objection. Infrastructure must enforce strict separation between client data at the database level.
-- **Secrets management** — API keys for Azure AI Foundry, database credentials, and any client-specific configuration need proper vault-based management.
-- **Scaling path** — Postgres is the only meaningful fixed cost. LLM and transcription costs scale with usage (and proportionally with revenue). Container Apps scales to zero when idle.
-- **Compliance** — passive voice recording in boardrooms has regulatory implications (consent laws vary by jurisdiction, GDPR for EU clients). Infrastructure choices should support data residency requirements.
+```
+/root/aurora/                    # git clone of this repo
+/root/aurora/backend/.env        # environment variables (not in git)
+/etc/systemd/system/aurora.service
+/etc/caddy/Caddyfile
+```
+
+### Systemd service (`aurora.service`)
+
+```ini
+[Unit]
+Description=Aurora Portfolio Manager Backend
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+WorkingDirectory=/root/aurora/backend
+ExecStartPre=/root/.local/bin/uv run alembic upgrade head
+ExecStart=/root/.local/bin/uv run uvicorn app.main:app --host 127.0.0.1 --port 8001
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### Caddy config
+
+```
+routing-api.ascentdatainsights.com, routing-api.ascentdi.com {
+     reverse_proxy localhost:8000
+}
+
+aurora-api.ascentdi.com {
+     reverse_proxy localhost:8001
+}
+```
+
+### Backend environment variables (`/root/aurora/backend/.env`)
+
+```
+ANTHROPIC_API_KEY=<your key>
+CARTESIA_API_KEY=<your key>       # optional, for voice chat TTS
+DEEPGRAM_API_KEY=<your key>       # optional, for speech-to-text
+DATABASE_URL=postgresql+asyncpg://aurora:aurora@localhost:5432/aurora
+CORS_ORIGINS=["https://aurora.ascentdi.com"]
+```
+
+### Deploying backend updates
+
+```bash
+ssh root@178.156.214.239
+cd /root/aurora
+git pull
+cd backend && uv sync --frozen --no-dev
+systemctl restart aurora
+```
+
+### GitHub access
+
+The VM has a read-only SSH deploy key registered on the `Ascent-Data-Insights/aurora_ai` repo (titled `hetzner-demos-server`).
+
+## Netlify Frontend
+
+The frontend is deployed as its own Netlify site (`adi-aurora-demo`), linked to the `Ascent-Data-Insights/aurora_ai` GitHub repo. Pushes to `main` auto-deploy. Build settings are in `frontend/netlify.toml`.
+
+### Environment variables (set in Netlify build)
+
+| Variable | Value | Purpose |
+|---|---|---|
+| `VITE_API_BASE` | `https://aurora-api.ascentdi.com` | Backend HTTP API base URL |
+| `VITE_WS_BASE` | `wss://aurora-api.ascentdi.com` | Backend WebSocket base URL |
+
+### Database
+
+PostgreSQL 16 on the VM, database `aurora`, user `aurora`. Migrations are run automatically on service start via `alembic upgrade head`.
+
+## DNS Records (Netlify DNS, `ascentdi.com` zone)
+
+| Record | Type | Value |
+|---|---|---|
+| `aurora-api.ascentdi.com` | A | `178.156.214.239` |
+| `aurora.ascentdi.com` | NETLIFY | `adi-aurora-demo.netlify.app` |
+| `routing-api.ascentdi.com` | A | `178.156.214.239` |
+| `demos.ascentdi.com` | NETLIFY | `adi-routing-demo.netlify.app` |
