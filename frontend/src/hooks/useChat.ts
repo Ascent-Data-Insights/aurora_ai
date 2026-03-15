@@ -123,6 +123,23 @@ export function useChat() {
     setFlowNodes({ route: 'idle', chat: 'idle', extract: 'idle', detect_regression: 'idle' })
     setRegression(null)
 
+    const fileNames = attachedFiles.filter(f => f.status === 'done' || f.status === 'pending').map(f => f.file.name)
+    const displayContent = fileNames.length > 0
+      ? `${text}\n\n📎 ${fileNames.join(', ')}`
+      : text
+
+    const messageToSend = text || `Please analyze the uploaded document${attachedFiles.length > 1 ? 's' : ''}.`
+
+    // Add user message to UI immediately, before any async work
+    const userMessage: Message = {
+      id: crypto.randomUUID(),
+      role: 'user',
+      content: displayContent,
+    }
+    setMessages(prev => [...prev, userMessage])
+    setIsLoading(true)
+    setAttachedFiles([])
+
     // Ensure we have a session for file uploads
     if (!sessionIdRef.current) {
       try {
@@ -131,6 +148,7 @@ export function useChat() {
         sessionIdRef.current = data.session_id
       } catch {
         setError('Failed to create session')
+        setIsLoading(false)
         return
       }
     }
@@ -141,25 +159,10 @@ export function useChat() {
       const ok = await uploadFiles(sessionIdRef.current!)
       if (!ok) {
         setError('Some files failed to upload')
+        setIsLoading(false)
         return
       }
     }
-
-    const fileNames = attachedFiles.filter(f => f.status === 'done' || f.status === 'pending').map(f => f.file.name)
-    const displayContent = fileNames.length > 0
-      ? `${text}\n\n📎 ${fileNames.join(', ')}`
-      : text
-
-    const messageToSend = text || `Please analyze the uploaded document${attachedFiles.length > 1 ? 's' : ''}.`
-
-    const userMessage: Message = {
-      id: crypto.randomUUID(),
-      role: 'user',
-      content: displayContent,
-    }
-    setMessages(prev => [...prev, userMessage])
-    setIsLoading(true)
-    setAttachedFiles([])
 
     let currentAssistantId = crypto.randomUUID()
 
