@@ -12,8 +12,8 @@
 
 | Domain | Points to | Purpose |
 |---|---|---|
-| `aurora-api.ascentdi.com` | Hetzner VM (Caddy → port 8001) | Backend API |
-| `aurora.ascentdi.com` | Netlify (`adi-aurora-demo`) | Frontend |
+| `portfolio-agent-api.ascentdi.com` | Hetzner VM (Caddy → port 8001) | Backend API |
+| `portfolio-agent.ascentdi.com` | Netlify (`adi-portfolio-agent-demo`) | Frontend |
 
 ## Hetzner VM Setup
 
@@ -24,29 +24,29 @@ The backend runs as a systemd service from a git clone of this repo.
 | Service | Port | Description |
 |---|---|---|
 | `routing-demo` | 8000 | Routing demo backend (separate project) |
-| `aurora` | 8001 | This project's backend |
+| `portfolio-agent` | 8001 | This project's backend |
 | `caddy` | 80/443 | Reverse proxy with auto-TLS |
 | `postgresql` | 5432 | Database |
 
 ### Key files on the VM
 
 ```
-/root/aurora/                    # git clone of this repo
-/root/aurora/backend/.env        # environment variables (not in git)
-/etc/systemd/system/aurora.service
+/root/portfolio-agent/                    # git clone of this repo
+/root/portfolio-agent/backend/.env        # environment variables (not in git)
+/etc/systemd/system/portfolio-agent.service
 /etc/caddy/Caddyfile
 ```
 
-### Systemd service (`aurora.service`)
+### Systemd service (`portfolio-agent.service`)
 
 ```ini
 [Unit]
-Description=Aurora Portfolio Manager Backend
+Description=Portfolio Agent Backend
 After=network.target postgresql.service
 
 [Service]
 Type=simple
-WorkingDirectory=/root/aurora/backend
+WorkingDirectory=/root/portfolio-agent/backend
 ExecStartPre=/root/.local/bin/uv run alembic upgrade head
 ExecStart=/root/.local/bin/uv run uvicorn app.main:app --host 127.0.0.1 --port 8001
 Restart=always
@@ -63,45 +63,45 @@ routing-api.ascentdatainsights.com, routing-api.ascentdi.com {
      reverse_proxy localhost:8000
 }
 
-aurora-api.ascentdi.com {
+portfolio-agent-api.ascentdi.com {
      reverse_proxy localhost:8001
 }
 ```
 
-### Backend environment variables (`/root/aurora/backend/.env`)
+### Backend environment variables (`/root/portfolio-agent/backend/.env`)
 
 ```
 ANTHROPIC_API_KEY=<your key>
 CARTESIA_API_KEY=<your key>       # optional, for voice chat TTS
 DEEPGRAM_API_KEY=<your key>       # optional, for speech-to-text
 DATABASE_URL=postgresql+asyncpg://aurora:aurora@localhost:5432/aurora
-CORS_ORIGINS=["https://aurora.ascentdi.com"]
+CORS_ORIGINS=["https://portfolio-agent.ascentdi.com"]
 ```
 
 ### Deploying backend updates
 
 ```bash
 ssh root@178.156.214.239
-cd /root/aurora
+cd /root/portfolio-agent
 git pull
 cd backend && uv sync --frozen --no-dev
-systemctl restart aurora
+systemctl restart portfolio-agent
 ```
 
 ### GitHub access
 
-The VM has a read-only SSH deploy key registered on the `Ascent-Data-Insights/aurora_ai` repo (titled `hetzner-demos-server`).
+The VM has a read-only SSH deploy key registered on the repo (titled `hetzner-demos-server`).
 
 ## Netlify Frontend
 
-The frontend is deployed as its own Netlify site (`adi-aurora-demo`), linked to the `Ascent-Data-Insights/aurora_ai` GitHub repo. Pushes to `main` auto-deploy. Build settings are in `frontend/netlify.toml`.
+The frontend is deployed as its own Netlify site (`adi-portfolio-agent-demo`), linked to the GitHub repo. Pushes to `main` auto-deploy. Build settings are in `frontend/netlify.toml`.
 
 ### Environment variables (set in Netlify build)
 
 | Variable | Value | Purpose |
 |---|---|---|
-| `VITE_API_BASE` | `https://aurora-api.ascentdi.com` | Backend HTTP API base URL |
-| `VITE_WS_BASE` | `wss://aurora-api.ascentdi.com` | Backend WebSocket base URL |
+| `VITE_API_BASE` | `https://portfolio-agent-api.ascentdi.com` | Backend HTTP API base URL |
+| `VITE_WS_BASE` | `wss://portfolio-agent-api.ascentdi.com` | Backend WebSocket base URL |
 
 ### Database
 
@@ -111,7 +111,7 @@ PostgreSQL 16 on the VM, database `aurora`, user `aurora`. Migrations are run au
 
 | Record | Type | Value |
 |---|---|---|
-| `aurora-api.ascentdi.com` | A | `178.156.214.239` |
-| `aurora.ascentdi.com` | NETLIFY | `adi-aurora-demo.netlify.app` |
+| `portfolio-agent-api.ascentdi.com` | A | `178.156.214.239` |
+| `portfolio-agent.ascentdi.com` | NETLIFY | `adi-portfolio-agent-demo.netlify.app` |
 | `routing-api.ascentdi.com` | A | `178.156.214.239` |
 | `demos.ascentdi.com` | NETLIFY | `adi-routing-demo.netlify.app` |

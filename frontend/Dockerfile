@@ -1,4 +1,6 @@
 FROM node:22-alpine AS build
+ARG VITE_DEBUG=false
+ENV VITE_DEBUG=$VITE_DEBUG
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci

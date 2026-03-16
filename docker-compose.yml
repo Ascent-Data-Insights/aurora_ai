@@ -24,6 +24,7 @@ services:
       - backend/.env
     environment:
       DATABASE_URL: postgresql+asyncpg://aurora:aurora@db:5432/aurora
+      DEBUG: "true"
     ports:
       - "8000:8000"
     healthcheck:
@@ -36,6 +37,8 @@ services:
     build:
       context: frontend
       dockerfile: Dockerfile
+      args:
+        VITE_DEBUG: "true"
     depends_on:
       backend:
         condition: service_healthy

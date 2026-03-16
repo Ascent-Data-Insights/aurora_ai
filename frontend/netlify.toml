@@ -3,8 +3,8 @@
   publish = "dist"
 
 [build.environment]
-  VITE_API_BASE = "https://aurora-api.ascentdi.com"
-  VITE_WS_BASE = "wss://aurora-api.ascentdi.com"
+  VITE_API_BASE = "https://portfolio-agent-api.ascentdi.com"
+  VITE_WS_BASE = "wss://portfolio-agent-api.ascentdi.com"
 
 # SPA fallback
 [[redirects]]
