@@ -81,3 +81,19 @@ async def set_state(db: AsyncSession, session_id: str, state: SessionState) -> N
         session.state_json = state.model_dump()
         session.updated_at = datetime.now(timezone.utc)
         await db.commit()
+
+
+def build_document_context(session_id: str) -> str:
+    """Build a context string from all uploaded documents in a session."""
+    docs = _document_store.get(session_id, [])
+    if not docs:
+        return ""
+
+    parts = []
+    for doc in docs:
+        parts.append(f"--- Document: {doc.filename} ---\n{doc.text}")
+    return (
+        "The user has uploaded the following documents for context. "
+        "Use this information to inform your responses.\n\n"
+        + "\n\n".join(parts)
+    )

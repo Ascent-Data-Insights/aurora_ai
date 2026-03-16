@@ -6,37 +6,74 @@ import DebugPanel from '@/components/DebugPanel'
 import ThreeRings from '@/components/ThreeRings'
 import logo from '@/assets/logo.png'
 
+const API_BASE = import.meta.env.VITE_API_BASE ?? ''
 const DEBUG = import.meta.env.VITE_DEBUG === 'true'
 
 export default function App() {
-  const { messages, input, setInput, isLoading, error, scores, debug, flowNodes, regression, sendMessage, setScores, setDebug, addAssistantMessage, attachedFiles, addFiles, removeFile } = useChat()
+  const { messages, input, setInput, isLoading, error, setError, scores, debug, flowNodes, regression, sendMessage, setScores, setDebug, addAssistantMessage, removeMessage, attachedFiles, addFiles, removeFile, sessionIdRef: chatSessionIdRef, uploadFiles, clearFiles } = useChat()
   const [voiceEnabled, setVoiceEnabled] = useState(false)
 
-  const { isPlaying, sendVoiceMessage, stopPlayback } = useVoiceChat(
+  const { isPlaying, sendVoiceMessage, stopPlayback, sessionIdRef: voiceSessionIdRef } = useVoiceChat(
     setScores,
     DEBUG ? setDebug : undefined,
   )
 
   const handleSubmit = useCallback(async (content?: string) => {
     const text = (content ?? input).trim()
-    if (!text) return
+    if (!text && attachedFiles.length === 0) return
 
     if (voiceEnabled) {
       setInput('')
-      addAssistantMessage(text, 'user')
+
+      const fileNames = attachedFiles.filter(f => f.status === 'done' || f.status === 'pending').map(f => f.file.name)
+      const messageToSend = text || `Please analyze the uploaded document${attachedFiles.length > 1 ? 's' : ''}.`
+      const displayContent = fileNames.length > 0
+        ? `${messageToSend}\n\n📎 ${fileNames.join(', ')}`
+        : messageToSend
+
+      addAssistantMessage(displayContent, 'user')
       const assistantId = addAssistantMessage('', 'assistant')
 
+      if (!chatSessionIdRef.current) {
+        try {
+          const res = await fetch(`${API_BASE}/api/chat/sessions`, { method: 'POST' })
+          const data = await res.json()
+          chatSessionIdRef.current = data.session_id
+        } catch {
+          removeMessage(assistantId)
+          await sendMessage(text)
+          return
+        }
+      }
+
+      if (attachedFiles.some(f => f.status === 'pending')) {
+        const ok = await uploadFiles(chatSessionIdRef.current!)
+        if (!ok) {
+          addAssistantMessage('Some files failed to upload.', 'assistant', assistantId)
+          setError('Some files failed to upload')
+          return
+        }
+      }
+
+      voiceSessionIdRef.current = chatSessionIdRef.current
+      clearFiles()
+
       try {
-        await sendVoiceMessage(text, (transcript) => {
+        await sendVoiceMessage(messageToSend, (transcript) => {
           addAssistantMessage(transcript, 'assistant', assistantId)
         })
       } catch {
-        await sendMessage(text)
+        removeMessage(assistantId)
+        await sendMessage(messageToSend)
+      }
+
+      if (voiceSessionIdRef.current) {
+        chatSessionIdRef.current = voiceSessionIdRef.current
       }
     } else {
       await sendMessage(content)
     }
-  }, [input, voiceEnabled, sendMessage, sendVoiceMessage, setInput, addAssistantMessage])
+  }, [input, voiceEnabled, sendMessage, sendVoiceMessage, setInput, setError, addAssistantMessage, removeMessage, attachedFiles, uploadFiles, clearFiles, chatSessionIdRef, voiceSessionIdRef])
 
   return (
     <div className="flex h-screen flex-col font-body bg-zinc-50">

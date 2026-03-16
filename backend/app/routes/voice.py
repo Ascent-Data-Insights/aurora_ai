@@ -12,6 +12,7 @@ from app.db import async_session_factory
 from app.models.graph import SessionState
 from app.services.flow_graph import run_flow_streaming
 from app.services import sessions
+from app.services.sessions import build_document_context
 from app.services.tts import stream_tts
 
 logger = logging.getLogger(__name__)
@@ -73,11 +74,12 @@ async def voice_chat(ws: WebSocket):
                 await ws.send_text(json.dumps({"type": "session", "session_id": session_id}))
 
                 state = await sessions.get_state(db, session_id) or SessionState()
+                doc_context = build_document_context(session_id)
                 queue: asyncio.Queue = asyncio.Queue()
                 text_queue: asyncio.Queue[str | None] = asyncio.Queue()
 
                 flow_task = asyncio.create_task(
-                    run_flow_streaming(state, message_history, message, queue)
+                    run_flow_streaming(state, message_history, message, queue, document_context=doc_context)
                 )
 
                 async def consume_events():
@@ -91,7 +93,7 @@ async def voice_chat(ws: WebSocket):
                             await text_queue.put(event["content"])
 
                         # Forward relevant events to the WebSocket client
-                        if evt_type in ("scores", "regression", "debug", "flow_node"):
+                        if evt_type in ("delta", "scores", "regression", "debug", "flow_node"):
                             await ws.send_text(json.dumps(event))
 
                         if evt_type == "done":

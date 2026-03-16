@@ -36,6 +36,7 @@ export function useVoiceChat(
       setIsPlaying(true)
 
       return new Promise<void>((resolve, reject) => {
+        let accumulated = ''
         const ws = new WebSocket(`${WS_BASE}/api/voice/ws`)
         ws.binaryType = 'arraybuffer'
         wsRef.current = ws
@@ -81,6 +82,9 @@ export function useVoiceChat(
 
             if (data.type === 'session') {
               sessionIdRef.current = data.session_id
+            } else if (data.type === 'delta') {
+              accumulated += data.content
+              onTranscript(accumulated)
             } else if (data.type === 'transcript') {
               onTranscript(data.content)
             } else if (data.type === 'scores') {

@@ -288,5 +288,11 @@ export function useChat() {
     sessionIdRef.current = null
   }, [])
 
-  return { messages, input, setInput, isLoading, error, scores, debug, flowNodes, regression, sendMessage, resetChat, setScores, setDebug, addAssistantMessage, attachedFiles, addFiles, removeFile }
+  const clearFiles = useCallback(() => setAttachedFiles([]), [])
+
+  const removeMessage = useCallback((id: string) => {
+    setMessages(prev => prev.filter(m => m.id !== id))
+  }, [])
+
+  return { messages, input, setInput, isLoading, error, setError, scores, debug, flowNodes, regression, sendMessage, resetChat, setScores, setDebug, addAssistantMessage, removeMessage, attachedFiles, addFiles, removeFile, sessionIdRef, uploadFiles, clearFiles }
 }

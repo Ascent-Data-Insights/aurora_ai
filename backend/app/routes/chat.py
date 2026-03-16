@@ -13,7 +13,7 @@ from app.rate_limit import limiter
 from app.services.document_parser import parse_document
 from app.services.flow_graph import run_flow, run_flow_streaming
 from app.services import sessions
-from app.services.sessions import UploadedDocument, _document_store
+from app.services.sessions import UploadedDocument, _document_store, build_document_context
 
 logger = logging.getLogger(__name__)
 
@@ -67,22 +67,6 @@ async def upload_documents(
     return results
 
 
-def _build_document_context(session_id: str) -> str:
-    """Build a context string from all uploaded documents in a session."""
-    docs = _document_store.get(session_id, [])
-    if not docs:
-        return ""
-
-    parts = []
-    for doc in docs:
-        parts.append(f"--- Document: {doc.filename} ---\n{doc.text}")
-    return (
-        "The user has uploaded the following documents for context. "
-        "Use this information to inform your responses.\n\n"
-        + "\n\n".join(parts)
-    )
-
-
 @router.post("", response_model=ChatResponse)
 @limiter.limit("20/minute")
 async def chat(request: Request, body: ChatRequest, db: AsyncSession = Depends(get_db)) -> ChatResponse:
@@ -93,7 +77,7 @@ async def chat(request: Request, body: ChatRequest, db: AsyncSession = Depends(g
         raise HTTPException(status_code=404, detail="Session not found")
 
     state = await sessions.get_state(db, session_id) or SessionState()
-    doc_context = _build_document_context(session_id)
+    doc_context = build_document_context(session_id)
     result = await run_flow(state, messages=message_history, user_message=body.message, document_context=doc_context)
 
     await sessions.set(db, session_id, result["messages"])
@@ -115,7 +99,7 @@ async def chat_stream(request: Request, body: ChatRequest, db: AsyncSession = De
         yield f"data: {json.dumps({'type': 'session', 'session_id': session_id})}\n\n"
 
         state = await sessions.get_state(db, session_id) or SessionState()
-        doc_context = _build_document_context(session_id)
+        doc_context = build_document_context(session_id)
         queue: asyncio.Queue = asyncio.Queue()
 
         task = asyncio.create_task(
